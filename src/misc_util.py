@@ -1,3 +1,4 @@
+from math import log, exp
 def str2int(l):
     return [int(e) for e in l]
 
@@ -17,3 +18,10 @@ def get_input_iterator(f):
 def log_sum_exp(seq):
     a=max(seq)
     return a+log(sum([exp(e-a) for e in seq]))
+
+
+def list_add(l1, l2):
+    return map(lambda x,y: x+y, l1, l2)
+
+def close(f1, f2):
+    return abs(f1-f2) < 1e-5

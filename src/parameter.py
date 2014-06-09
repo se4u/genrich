@@ -1,7 +1,7 @@
 import collections, itertools
-from math import log, exp
+from math import log
 import numpy as np
-
+from misc_util import log_sum_exp
 class Add_Lambda_Smoother(collections.MutableMapping):
     """A dictionary that applies an arbitrary key-altering
     function before accessing the keys.
@@ -25,8 +25,9 @@ class Add_Lambda_Smoother(collections.MutableMapping):
             num=self.numerator[key]+self.Lambda
         else:
             num=self.Lambda
-        if key(1,:) in self.denominator:
-            den=self.denominator[key(1:)]+(self.Lambda * self.V)
+        k=key[1:]
+        if k in self.denominator:
+            den=self.denominator[k]+(self.Lambda * self.V)
         else:
             return 0.0
         return log(num)-log(den)
@@ -36,14 +37,15 @@ class Add_Lambda_Smoother(collections.MutableMapping):
             self.numerator[key]+=value
         else:
             self.numerator[key]=value
-        if key(1,:) in self.denominator:
-            self.denominator[key(1,:)]+=value
+        k=key[1:]
+        if k in self.denominator:
+            self.denominator[k]+=value
         else:
-            self.denominator[key(1,:)]=value
+            self.denominator[k]=value
 
     def __delitem__(self, key):
         del self.numerator[key]
-        del self.denominator[key(1,:)]
+        del self.denominator[key[1:]]
 
     def __iter__(self):
         return iter(self.numerator) # HACK: Maybe add denominator too
@@ -63,28 +65,34 @@ class Parameter:
                  bilinear_init_sigma=0.01,
                  t_given_w_lambda=0.1,
                  w_given_t_BOS_lambda=0.01):
+        np.random.seed(42)
         self.T = len(tag_vocab) # Number of tags (not including NULLTAG)
         self.V = len(word_vocab) # Number of words (not including BOS, EOS)
         self.R = len(word_embedding[0]) # dimensionality of embeddings
         self.regularization_type=regularization_type
+        self.unsup_ll_factor=unsup_ll_factor
+        self.regularization_factor=regularization_factor
+        self.tag_vocab=tag_vocab
+        self.word_vocab=word_vocab
         ###################################################################
         ## Initialize the embeddings array. It contains R rows, V+1 column
         ###################################################################
-        self.RW = np.vstack(\
-            (np.array(1, self.R), np.array(word_embedding).T))
-        assert self.RW.shape==(self.R, self.V+1)
+        z=np.zeros((self.R, 1))
+        self.RW = np.hstack((z, np.array(word_embedding).T, z))
+        assert self.RW.shape==(self.R, self.V+2)
         ###################################################################
         ## Initialize dict to map Word to its Index in the Embeddings array
         ###################################################################
         self.word_idx_dict={}
-        self.word_idx_dict[BOS]=0
+        self.word_idx_dict[self.BOS]=0
         for i, w in enumerate(word_vocab):
             self.word_idx_dict[w]=(i+1)
+        self.word_idx_dict[self.EOS]=self.V+1
         ###################################################################
         ## Initialize dict to map Tag to its Index in the Embeddings array
         ###################################################################
         self.tag_idx_dict={}
-        self.tag_idx_dict[NULLTAG]=0
+        self.tag_idx_dict[self.NULLTAG]=0
         for i, t in enumerate(tag_vocab):
             self.tag_idx_dict[t]=i+1
         ###################################################################
@@ -94,21 +102,21 @@ class Parameter:
         self.C2 = np.random.randn(self.R, self.R)*bilinear_init_sigma
         self.U1 = np.random.randn(self.R, self.T+1)*bilinear_init_sigma
         self.U2 = np.random.randn(self.R, self.T+1)*bilinear_init_sigma
-        self.BW = np.random.randn(self.V+1, 1)*bilinear_init_sigma
+        self.BW = np.random.randn(self.V+2, 1)*bilinear_init_sigma
         ###################################################################
         ## Initialize TAG|Word and Word | BOS CPDs 
         ###################################################################
         self.t_given_w = Add_Lambda_Smoother(t_given_w_lambda, self.T)
         self.w_given_t_BOS= Add_Lambda_Smoother(w_given_t_BOS_lambda, self.V)
         for word, tag in itertools.izip(sup_word, sup_tag):
-            prev_tag=parameter.NULLTAG
-            prev_word=parameter.BOS
+            prev_tag=self.NULLTAG
+            prev_word=self.BOS
             for i in xrange(len(tag)):
                 self.t_given_w[tag[i], prev_tag, prev_word]=1
                 prev_tag=tag[i]
                 prev_word=word[i]
         for word, tag in itertools.izip(sup_word, sup_tag):
-            self.w_given_t_BOS[word[0], tag[0], parameter.BOS]=1
+            self.w_given_t_BOS[word[0], tag[0], self.BOS]=1
         return
 
     def get_tag_idx(self, tag):
@@ -125,17 +133,27 @@ class Parameter:
     def get_lp_w_given_t_BOS(self, word, cur_tag):
         """ This is the probability of only the BOS
         """
-        return self.w_given_t_BOS[word, cur_tag, parameter.BOS]
+        assert cur_tag != self.NULLTAG
+        return self.w_given_t_BOS[word, cur_tag, self.BOS]
+
+    def get_next_seq_embedding(self, prev_word_seq, prev_embedding):
+        pw = prev_word_seq[-1]
+        c1rwk = np.dot(self.C1, self.RW[:, self.get_word_idx(pw)])
+        if prev_embedding is not None:
+            c2rw02km1 = np.dot(self.C2, prev_embedding)
+            next_seq_embedding = c1rwk + c2rw02km1
+        else:
+            next_seq_embedding = c1rwk
+        return next_seq_embedding
     
     def get_lp_w_given_two_tag_and_word_seq( \
         self, word, cur_tag, prev_tag, prev_word_seq, seq_embedding):
-        pw = prev_word_seq[-1]
-        c1rwk = np.dot(self.C1, self.RW[:, self.get_word_idx(pw)])
-        c2rw02km1 = np.dot(self.C2, seq_embedding)
-        next_seq_embedding = c1rwk + c2rw02km1
+        """ Note that the prev_tag can be NULLTAG. In that case
+        prev_word_seq has only 1 word.
+        """ 
         u1tk = self.U1[:, self.get_tag_idx(cur_tag)]
         u2tkm1 = self.U2[:, self.get_tag_idx(prev_tag)]
-        r_pred = next_seq_embedding + u1tk + u2tkm1
+        r_pred = seq_embedding + u1tk + u2tkm1
         wi = self.get_word_idx(word)
         rw = self.RW[:, wi]
         bw = self.BW[wi]
@@ -152,6 +170,7 @@ class Parameter:
         """ Calculate the regularization based on the current parameters
         """
         if self.regularization_type=="l2":
-            pass
+            return 0.0 # TODO
         else:
-            throw NotImplementedError
+            raise NotImplementedError
+
