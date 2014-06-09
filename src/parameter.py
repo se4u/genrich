@@ -1,4 +1,4 @@
-import collections, itertools
+import collections, itertools, cPickle
 from math import log
 import numpy as np
 from misc_util import log_sum_exp
@@ -174,7 +174,9 @@ class Parameter:
         
     def serialize(self, filename):
         """ Save this object to file. """
-
+        with open(filename, "wb") as f:
+            cPickle.dump(self, f)
+    
     def regularization_contrib(self):
         """ Calculate the regularization based on the current parameters
         """

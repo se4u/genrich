@@ -13,3 +13,6 @@ def gmemm_full_observed_ll(word, tag, parameter):
     return s
 
 
+
+def gmemm_tag_word(word, parameter):
+    pass

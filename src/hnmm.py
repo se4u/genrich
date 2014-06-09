@@ -80,3 +80,11 @@ def hnmm_full_observed_ll(word, tag, parameter):
 
 
 
+def hnmm_tag_word(word, parameter):
+    """ Given a sentence of word predict its tags.
+    parameter object holds all the relevant information
+    Return a list of three things
+    [word likelihood, predicted tag, tag probabilities]
+    """
+    
+    pass

@@ -117,7 +117,8 @@ if model_save_filename.startswith(r"res/postag_small.model"):
     ar=[ll_sup([["A", "D"]], [[str(i), str(j)]], parameter, "HNMM") for i in range(1,5) for j in range(1,5)]
     assert close(log_sum_exp(ar), ll_unsup([["A", "D"]], parameter, "HNMM"))
     print ll(sup_word, sup_tag, unsup_word, parameter, model_type)
-    
+    pass
+
 ################################################################
 ## Use AD to calculate its gradient
 ## TODO: Test that AD and numerical diff give the same result.
@@ -127,4 +128,7 @@ if model_save_filename.startswith(r"res/postag_small.model"):
 ## Optimize the parameters using LBFGS
 ########################################
 
-
+########################################
+## Save the parameter object to file
+########################################
+parameter.serialize(model_save_filename)
