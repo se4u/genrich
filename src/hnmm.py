@@ -49,10 +49,10 @@ def hnmm_only_word_observed_ll(word, parameter):
                 ######################################################
                 if factor_idx==len(word)-2:
                     prev_word_seq=word[0:factor_idx+2]
-                    seq_embedding=parameter.get_next_seq_embedding(\
+                    EOS_seq_embedding=parameter.get_next_seq_embedding(\
                         prev_word_seq,seq_embedding)
                     arr2=[parameter.get_lp_w_given_two_tag_and_word_seq( \
-                            parameter.EOS, ti, tim1, word, seq_embedding)
+                            parameter.EOS, ti, tim1, word, EOS_seq_embedding)
                           for tim1 in parameter.tag_vocab]
                     arr1=list_add(arr1, arr2)
                 phi[factor_idx][ti]=log_sum_exp(list_add(arr, arr1))

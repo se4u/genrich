@@ -59,8 +59,15 @@ class Parameter:
     EOS=1
     NULLTAG=0
     
-    def __init__(self, word_vocab, word_embedding, tag_vocab,
-                 unsup_ll_factor, regularization_factor, sup_word, sup_tag,
+    def __init__(self,
+                 word_vocab,
+                 word_embedding,
+                 EOS_embedding,
+                 tag_vocab,
+                 unsup_ll_factor,
+                 regularization_factor,
+                 sup_word,
+                 sup_tag,
                  regularization_type,
                  bilinear_init_sigma=0.01,
                  t_given_w_lambda=0.1,
@@ -74,11 +81,13 @@ class Parameter:
         self.regularization_factor=regularization_factor
         self.tag_vocab=tag_vocab
         self.word_vocab=word_vocab
+        self.EOS_embedding=EOS_embedding
         ###################################################################
         ## Initialize the embeddings array. It contains R rows, V+1 column
         ###################################################################
-        z=np.zeros((self.R, 1))
-        self.RW = np.hstack((z, np.array(word_embedding).T, z))
+        self.RW = np.vstack((np.zeros((1, self.R)),
+                             np.array(word_embedding),
+                             EOS_embedding)).T
         assert self.RW.shape==(self.R, self.V+2)
         ###################################################################
         ## Initialize dict to map Word to its Index in the Embeddings array
@@ -159,7 +168,7 @@ class Parameter:
         bw = self.BW[wi]
         lognum = np.dot(rw, r_pred)+bw
         logden = log_sum_exp([np.dot(self.RW[:, i], r_pred)+self.BW[i]
-                              for i in xrange(1,self.V+1)])
+                              for i in xrange(1,self.V+2)])
         return lognum-logden
         
         
