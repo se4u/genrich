@@ -5,27 +5,33 @@ from math import log, exp
 from parameter import Parameter
 from hnmm import hnmm_full_observed_ll, hnmm_only_word_observed_ll
 from gmemm import gmemm_full_observed_ll, gmemm_only_word_observed_ll
-from misc_util import *
-model_type=sys.argv[1] # HNMM, GMEMM, Simul
-objective_type=sys.argv[2] # LL, NCE
-optimization_type=sys.argv[3] # LBFGS, EM, Natural Gradient
-word_vocab_file=open(sys.argv[4], "rb")
-tag_vocab_file=open(sys.argv[5], "rb")
-supervised_word_file=open(sys.argv[6], "rb")
-supervised_tag_file=open(sys.argv[7], "rb")
-unsupervised_word_file=open(sys.argv[8], "rb")
-model_save_filename=sys.argv[9]
-unsup_ll_factor=float(sys.argv[10])
-regularization_factor=float(sys.argv[11])
-regularization_type = sys.argv[12]
-[word_vocab, word_embedding, EOS_embedding]=word_vocab_and_embedding(word_vocab_file)
-tag_vocab=[e.strip() for e in tag_vocab_file]
-sup_word=list(get_input_iterator(supervised_word_file))
-sup_tag=list(get_input_iterator(supervised_tag_file))
-unsup_word=list(get_input_iterator(unsupervised_word_file))
-bilinear_init_sigma=0.01
-t_given_w_lambda=0.1
-w_given_t_BOS_lambda=0.01
+from util_oneliner import get_vocab_from_file
+from util_datamunge import word_vocab_and_embedding
+import optparse
+def get_param(l, k):
+    "Get sys.argv as l and get the value of the corresponding option"
+
+options=dict(e.split("=") for e in sys.argv[1:])
+model_type        = options["MODEL_TYPE"]
+cpd_type          = options["CPD_TYPE"]
+objective_type    = options["OBJECTIVE_TYPE"]
+optimization_type = options["OPTIMIZATION_TYPE"]
+unsup_ll_weight   = float(options["UNSUP_LL_WEIGHT"])
+param_reg_type    = options["PARAM_REG_TYPE"]
+param_reg_weight  = options["PARAM_REG_WEIGHT"]
+tag_vocab         = get_vocab_from_file(open(options["TAG_VOCAB_FILE"], "rb"))
+word_vocab        = get_vocab_from_file(open(options["WORD_VOCAB_FILE"], "rb"))
+sup_train_file    = open(options["SUP_TRAIN_FILE"], "rb")
+unsup_train_file  = open(options["UNSUP_TRAIN_FILE"], "rb")
+word_embedding_filename = options["WORD_EMBEDDING_FILE"]
+save_filename     = options["SAVE_FILE"]
+
+wordtag=token_iterator(sup_train_file)
+
+# unsup_word=list(get_input_iterator(unsupervised_word_file))
+# bilinear_init_sigma=0.01
+# t_given_w_lambda=0.1
+# w_given_t_BOS_lambda=0.01
 
 parameter=Parameter(word_vocab,
                     word_embedding,
@@ -55,9 +61,8 @@ if model_save_filename.startswith(r"res/postag_small.model"):
     
 
     
-########################################################
-## DEFINE Log Likelihood Functions for HNMM and GMEMM 
-########################################################
+#####################################################
+# DEFINE Log Likelihood Functions for HNMM and GMEMM 
 def ll(sup_word, sup_tag, unsup_word, parameter, model_type):
     ret=ll_sup(sup_word, sup_tag, parameter, model_type)
     ret+= parameter.unsup_ll_factor*ll_unsup(unsup_word, parameter, model_type)

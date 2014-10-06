@@ -5,15 +5,17 @@ from misc_util import log_sum_exp
 class Add_Lambda_Smoother(collections.MutableMapping):
     """A dictionary that applies an arbitrary key-altering
     function before accessing the keys.
-    This Smoother assumes that the first item is the outcome space
-    and the rest are conditioned on. e.g. (a,b,c) means (a|b,c)
-    It does not backoff to a smooth estimate if b,c is absent.
+    This Smoother assumes that the first item is the
+    outcome space and the rest are conditioned on. e.g.
+    (a,b,c) means (a|b,c) It does not backoff to a smooth
+    estimate if b,c is absent.
     It just returns 0.0 (because that's log of 1.0)"""
 
     def __init__(self, Lambda, V):
-        """ Lambda is the constant to be added in the numerator
-        V is the number of distinct possibilities of the discrete event
-        We add lambda*V to the denominator
+        """ Lambda is the constant to be added in the
+        numerator. V is the number of distinct
+        possibilities of the discrete event. We add
+        lambda*V to the denominator.
         """
         self.numerator=dict()
         self.denominator=dict()
@@ -55,10 +57,11 @@ class Add_Lambda_Smoother(collections.MutableMapping):
 
 
 class Parameter:
+    """WHY IS THIS CALLED PARAMETER ???
+    """
     BOS=0
     EOS=1
     NULLTAG=0
-    
     def __init__(self,
                  word_vocab,
                  word_embedding,
@@ -82,49 +85,50 @@ class Parameter:
         self.tag_vocab=tag_vocab
         self.word_vocab=word_vocab
         self.EOS_embedding=EOS_embedding
-        ###################################################################
-        ## Initialize the embeddings array. It contains R rows, V+1 column
-        ###################################################################
+        ############################################
+        # Initialize the embeddings array.
+        # It contains R rows, V+1 column
         self.RW = np.vstack((np.zeros((1, self.R)),
                              np.array(word_embedding),
                              EOS_embedding)).T
         assert self.RW.shape==(self.R, self.V+2)
-        ###################################################################
-        ## Initialize dict to map Word to its Index in the Embeddings array
-        ###################################################################
+        ############################################
+        # Initialize dict to map Word to its Index
+        # in the Embeddings array
         self.word_idx_dict={}
         self.word_idx_dict[self.BOS]=0
         for i, w in enumerate(word_vocab):
             self.word_idx_dict[w]=(i+1)
         self.word_idx_dict[self.EOS]=self.V+1
-        ###################################################################
-        ## Initialize dict to map Tag to its Index in the Embeddings array
-        ###################################################################
+        ############################################
+        # Initialize dict to map Tag to its Index
+        # in the Embeddings array
         self.tag_idx_dict={}
         self.tag_idx_dict[self.NULLTAG]=0
         for i, t in enumerate(tag_vocab):
             self.tag_idx_dict[t]=i+1
-        ###################################################################
-        ## Initialize the recurrent log-linear model
-        ###################################################################
+        #############################################
+        # Initialize the recurrent log-linear model
+        #############################################
         self.C1 = np.random.randn(self.R, self.R)*bilinear_init_sigma
         self.C2 = np.random.randn(self.R, self.R)*bilinear_init_sigma
         self.U1 = np.random.randn(self.R, self.T+1)*bilinear_init_sigma
         self.U2 = np.random.randn(self.R, self.T+1)*bilinear_init_sigma
         self.BW = np.random.randn(self.V+2, 1)*bilinear_init_sigma
-        ###################################################################
-        ## Initialize TAG|Word and Word | BOS CPDs 
-        ###################################################################
-        self.t_given_w = Add_Lambda_Smoother(t_given_w_lambda, self.T)
-        self.w_given_t_BOS= Add_Lambda_Smoother(w_given_t_BOS_lambda, self.V)
-        for word, tag in itertools.izip(sup_word, sup_tag):
+        ############################################
+        # Initialize TAG|Word and Word | BOS CPDs 
+        self.t_given_w = Add_Lambda_Smoother( \
+            t_given_w_lambda, self.T)
+        self.w_given_t_BOS= Add_Lambda_Smoother( \
+            w_given_t_BOS_lambda, self.V)
+        for word,tag in itertools.izip(sup_word, sup_tag):
             prev_tag=self.NULLTAG
             prev_word=self.BOS
             for i in xrange(len(tag)):
                 self.t_given_w[tag[i], prev_tag, prev_word]=1
                 prev_tag=tag[i]
                 prev_word=word[i]
-        for word, tag in itertools.izip(sup_word, sup_tag):
+        for word,tag in itertools.izip(sup_word, sup_tag):
             self.w_given_t_BOS[word[0], tag[0], self.BOS]=1
         return
 
@@ -184,4 +188,3 @@ class Parameter:
             return 0.0 # TODO
         else:
             raise NotImplementedError
-
