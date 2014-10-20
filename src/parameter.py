@@ -57,7 +57,7 @@ class Add_Lambda_Smoother(collections.MutableMapping):
 
 
 class Parameter:
-    """WHY IS THIS CALLED PARAMETER ???
+    """This class holds all the parameters.
     """
     BOS=0
     EOS=1

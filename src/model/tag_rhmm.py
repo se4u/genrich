@@ -1,6 +1,70 @@
-from misc_util import log_sum_exp, list_add
+
+class tag_rhmm(object):
+    def __init__(self, cpd_type, objective_type, param_reg_type,
+                  param_reg_weight,
+                  unsup_ll_weight,
+                  word_embedding_filename,
+                  initialize_embedding_according_to_file,
+                  initialize_param_to_random):
+        """The cpd_type defines the type of cpd to use, including the
+        smoothing and the model, hinton's lbl or structured sparse stuff.
+        """
+        pass
+    
+    def score_sto(self, sentence, tag_possibly_none):
+        """sto means sentence and tag observed.
+        but here the tags can be missing and represented by none in
+        which case we need to do the DP. This is the general case.
+        """
+        pass
+    
+    def score_ao(self, sentence, tag):
+        """ao means all observed. That both the tag and the word were observed
+        """
+        pass
+
+    def score_so(self, sentence):
+        """so means that the sentence was observed, but not the tags
+        This requires the use of DP. We are calculating the
+        E[P(sentence)] given the parameters.
+        This only needs a forward pass to compute the total probability.
+        """
+        pass
+
+    def gradient_so(self, sentence):
+        pass
+    
+    def gradient_sto(self, sentence, tag):
+        pass
+    
+    def predict_viterbi_tag_sequence(self):
+        """
+        """
+        pass
+
+    def predict_posterior_tag_sequence(self):
+        pass
+
+    def get_perplexity(self, sentence):
+        return self.score_so(sentence)
+
+    def generate_word_tag_sequence(self):
+        pass
+    def update_parameter(self, new_param):
+        """Change the 
+        """
+        pass
+    def get_copy_of_param(self):
+        """This function returns me a COPY of the current params.
+        It includes everything. The params used in the lm,
+        the params used for state transitions of the tagging model.
+        EVERYTHING!
+        """
+        pass
+    
 def hnmm_only_word_observed_ll(word, parameter):
-    """Use dynamic programming(specifically Variable Elimination)
+    """Use dynamic programming
+    (specifically Variable Elimination)
     trick to marginalize over the unobserved tags
     Its complexity is sentence_length * (tags)^2"""
     if len(word)==1:
