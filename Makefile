@@ -64,7 +64,7 @@ predict_tag_generic: $(MYDEP1) $(MYDEP2)
 # UNSUP_TRAIN_FILE    = name of the training file with unsupervised data
 # SUP_DEV_FILE        = name of the dev data file
 # 2 example targets are
-# res/train_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocab~wsj_tag.train~unsup.txt~wsj_tag.dev~unsup_embedding.txt
+# res/train_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train~unsup.txt~wsj_tag.dev
 # res/train_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev
 # SAVE_FILE            = name of the output pickle of the trained file
 TRAIN_OPT_EXTRACTOR = $(word $1,$(subst ~, ,$*))

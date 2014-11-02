@@ -32,4 +32,4 @@ def mean(it_e):
     for count,e in enumerate(it_e):
         total+=e
     return total/(count+1)
-    
+
