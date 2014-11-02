@@ -1,33 +1,49 @@
-.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict
+.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train
 .SECONDARY:
-PYCMD := python
+PYCMD := OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=fast_run,lib.amdlibm=True,mode=FAST_RUN,gcc.cxxflags=-O9 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True' time python # -m pdb
 NOSETEST_CMD := nosetests --verbosity=3 --with-doctest --exe --pdb --processes=1
 test_all: # --failed --with-profile
 	$(NOSETEST_CMD)  -w src/test
 collect_test_all:
 	$(NOSETEST_CMD) --collect-only -w src/test
 # TARGET: tag stripped version of any input file in res folder
+
 res/%.tagstrip: res/%
 	sed 's#/[^ ]*##g' $< > $@
 #####################################
 ### EVALUATION
 # TARGET : Printed output of accuracy.
 # SOURCE : 1. The predicted postags 2. The actual postags
-# log/eval_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding@toy.dev
-log/eval_tag_% : log/predict_tag_%.tagstrip res/$(call PREDICT_OPT_EXTRACTOR,2)
-	$(PYCMD) src/postag_accuracy.py $+
+# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev@toy.dev
+# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocab~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev@wsj_tag.dev
+# Evaluate on training done on truncated vocabulary.
+# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev@wsj_tag.dev
+log/eval_tag_% :
+	$(MAKE) MYDEP1="log/predict_tag_$*.tagstrip" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ eval_tag_generic
+eval_tag_generic: $(MYDEP1) $(MYDEP2)
+	$(PYCMD) \
+	src/eval_tag.py \
+	    $(MYDEP1) \
+	    $(MYDEP2) \
+	    $(TARGET)
 
 ####################################
 ## POSTAGGER PREDICTION 
 # TARGET : The output of the postagger 
 # SOURCE : The trained postagger model,
 #	   The raw words that we want to postag using this model
-# Example command
-# log/predict_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding@toy.dev.tagstrip
-PREDICT_OPT_EXTRACTOR = $(word $1,$(subst @, ,%))
-log/predict_tag_% : res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1) res/$(call PREDICT_OPT_EXTRACTOR,2)
-	$(PYCMD) src/predict_tag.py  $+ $@
+# log/predict_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev@toy.dev.tagstrip
+PREDICT_OPT_EXTRACTOR = $(word $1,$(subst @, ,$*))
+log/predict_tag_% : 
+	$(MAKE) MYDEP1="res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1)" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ STOPAT=100 predict_tag_generic
 
+predict_tag_generic: $(MYDEP1) $(MYDEP2)
+	$(PYCMD) \
+	src/predict_tag.py \
+	    $(MYDEP1) \
+	    $(MYDEP2) \
+	    $(TARGET) \
+	    $(STOPAT)
 # # Train_train > Predict_train > Evaluate_train > Tune.parameters + Profile/debug.code (Loop)  > Train_train
 ####################################################################
 # TAGGER TRAINING
@@ -49,66 +65,47 @@ log/predict_tag_% : res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1) res/$(call PRE
 # SUP_DEV_FILE        = name of the dev data file
 # 2 example targets are
 # res/train_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocab~wsj_tag.train~unsup.txt~wsj_tag.dev~unsup_embedding.txt
-# res/train_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding
+# res/train_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev
 # SAVE_FILE            = name of the output pickle of the trained file
 TRAIN_OPT_EXTRACTOR = $(word $1,$(subst ~, ,$*))
 TRAIN_OPT_EXTRACTOR2 = $(word $1,$(subst ~, ,%))
-res/train_tag_% : res/$(call TRAIN_OPT_EXTRACTOR2,8) res/$(call TRAIN_OPT_EXTRACTOR2,9) res/$(call TRAIN_OPT_EXTRACTOR2,10) res/$(call TRAIN_OPT_EXTRACTOR2,11) res/$(call TRAIN_OPT_EXTRACTOR2,12)
-	export TAG_VOCAB_FILE=res/$(call TRAIN_OPT_EXTRACTOR,8) \
-	       WORD_VOCAB_FILE=res/$(call TRAIN_OPT_EXTRACTOR,9) \
-	       SUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,10) \
-	       UNSUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,11) \
-	       SUP_DEV_FILE=res/$(call TRAIN_OPT_EXTRACTOR,12)  && \
-	$(MAKE) MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
+default_train: res/train_tag_order0hmm~lbl100~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev
+res/train_tag_% : #res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train.word.vocab
+	$(PYCMD) src/train_tag.py MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
 	        CPD_TYPE=$(call TRAIN_OPT_EXTRACTOR,2) \
 	        OBJECTIVE_TYPE=$(call TRAIN_OPT_EXTRACTOR,3) \
-	        OPTIMIZATION_TYPE=$(call TRAIN_OPT_EXTRACTOR,4) \
-	        UNSUP_LL_WEIGHT=$(call TRAIN_OPT_EXTRACTOR,5) \
-	        PARAM_REG_TYPE=$(call TRAIN_OPT_EXTRACTOR,6) \
-	        PARAM_REG_WEIGHT=$(call TRAIN_OPT_EXTRACTOR,7) \
-	        TAG_VOCAB_FILE=$$TAG_VOCAB_FILE \
-	        WORD_VOCAB_FILE=$$WORD_VOCAB_FILE \
-	        SUP_TRAIN_FILE=$$SUP_TRAIN_FILE \
-	        UNSUP_TRAIN_FILE=$$UNSUP_TRAIN_FILE \
-	        SUP_DEV_FILE=$$SUP_DEV_FILE \
-	        WORD_EMBEDDING_FILE=$$WORD_EMBEDDING_FILE \
-	        SAVE_FILE=$@ \
-	        MYDEP="$$VOCAB_FILE $$TRAIN_FILE $$SUP_TRAIN_FILE $$UNSUP_TRAIN_FILE $$WORD_EMBEDDING_FILE" \
-	train_tag_generic
-
-train_tag_generic: $(MYDEP)
-	$(PYCMD) src/train_tag.py MODEL_TYPE=$(MODEL_TYPE) \
-	CPD_TYPE=$(CPD_TYPE) OBJECTIVE_TYPE=$(OBJECTIVE_TYPE) \
-	OPTIMIZATION_TYPE=$(OPTIMIZATION_TYPE) \
-	UNSUP_LL_WEIGHT=$(UNSUP_LL_WEIGHT) \
-	PARAM_REG_TYPE=$(PARAM_REG_TYPE) \
-	PARAM_REG_WEIGHT=$(PARAM_REG_WEIGHT) \
-	TAG_VOCAB_FILE=$(TAG_VOCAB_FILE) \
-	WORD_VOCAB_FILE=$(WORD_VOCAB_FILE) \
-	SUP_TRAIN_FILE=$(SUP_TRAIN_FILE) \
-	UNSUP_TRAIN_FILE=$(UNSUP_TRAIN_FILE) \
-	SUP_DEV_FILE=$(SUP_DEV_FILE) \
-	WORD_EMBEDDING_FILE=$(WORD_EMBEDDING_FILE) \
-	SAVE_FILE=$(SAVE_FILE) 
-
+	        PARAM_REG_TYPE=$(call TRAIN_OPT_EXTRACTOR,4) \
+	        PARAM_REG_WEIGHT=$(call TRAIN_OPT_EXTRACTOR,5) \
+	        UNSUP_LL_WEIGHT=$(call TRAIN_OPT_EXTRACTOR,6) \
+		INIT_FROM_FILE=$(call TRAIN_OPT_EXTRACTOR,7) \
+		PARAM_FILENAME=res/$(call TRAIN_OPT_EXTRACTOR,8) \
+	        TAG_VOCAB_FILE=res/$(call TRAIN_OPT_EXTRACTOR,9) \
+	        WORD_VOCAB_FILE=res/$(call TRAIN_OPT_EXTRACTOR,10) \
+	        SUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,11) \
+	        UNSUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,12) \
+	        SUP_DEV_FILE=res/$(call TRAIN_OPT_EXTRACTOR,13) \
+	        SAVE_FILE=$@ 
 
 #################################
-####### WSJ TAG INPUT CREATOR
-# The resolution was just to take the most probable one during training.
-# LDC95T7
+## WSJ TAG INPUT CREATOR
+# I just to take the most probable one during training, LDC95T7
+# Note that I am also preprocessing things to take care of OOVs while
+# converting to a single file 
 WSJ_PATH := /export/corpora/LDC/LDC99T42/treebank_3/tagged/pos/wsj
 WSJ_POSTAG_CMD = python src/datamunge/convert_wsj_files_to_single_file.py $(WSJ_PATH)
-# I NEED TO FIX THE FOLLLOWING
-# Currently I am assigning 46 pos tags in total
 WSJTAG_CMD = $@ $@.tag.vocab $@.word.vocab
+res/wsj_tag.train.word.vocabtrunc: res/wsj_tag.train.word.vocab
+	head -n 10000 $< > $@ && echo "<OOV> 1" >> $@
+res/wsj_tag.train_sup: res/wsj_tag.train
+	cp $< $@
+res/wsj_tag.train_unsup: res/wsj_tag.train
+	sed 's#/[^ ]*##g' $< > $@
 res/wsj_tag.train: 
 	$(WSJ_POSTAG_CMD) 0 18  $(WSJTAG_CMD)
 res/wsj_tag.dev:
 	$(WSJ_POSTAG_CMD) 19 21 $(WSJTAG_CMD)
 res/wsj_tag.test:
 	$(WSJ_POSTAG_CMD) 22 24 $(WSJTAG_CMD)
-# test_wsj_tag_code:
-# 	python src/datamunge/convert_wsj_files_to_single_file.py 0 0 $$PWD/res/test
 
 #####################################
 ## BASELINE (CRFSuite)

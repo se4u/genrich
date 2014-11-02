@@ -21,11 +21,42 @@ def pick_high_priority_tag(taglist):
     tag_rank=[(e, pos_tag_priority_tolerant_index(e)) for e in taglist]
     return min(tag_rank, key=lambda x: x[1])[0]
 
-def handle_piped_tags(e):
-    [a, b]=e.split(r"/")
-    if "|" in b:
-        b=pick_high_priority_tag(b.split("|"))
-    return a+"/"+b
+def add_to_dictionary(row):
+    for e in row:
+        if e != "":
+            try:
+                [e1, e2]=e.split(r"/")
+            except:
+                raise Exception(e)
+            word_dict[e1]+=1
+            pos_dict[e2]+=1
+    return
+
+def make_word_lower_case_if_lowercase_in_dictionary(w):
+    if w.lower() in word_dict:
+            w=w.lower()
+    return w
+
+def has_digits(w, num):
+    return sum(e.isdigit() for e in w) > num
+
+def mark_certain_words_numeric(w):
+    if has_digits(w, 2):
+            w="<NUM>"
+    return w
+
+def handle_piped_tags(row):
+    """The input is an actual string with tagged words
+    """
+    ret_arr=[]
+    for e in row.split():
+        [a, b]=e.split(r"/")
+        if "|" in b:
+            b=pick_high_priority_tag(b.split("|"))
+        a=make_word_lower_case_if_lowercase_in_dictionary(a)
+        a=mark_certain_words_numeric(a)
+        ret_arr.append(a+"/"+b)
+    return ret_arr
 
 def get_sets(fh):
     start=True
@@ -49,19 +80,10 @@ def get_sets(fh):
                 yield " ".join(ret)
                 ret=[]
         else:
-            try:
-                row=" ".join([handle_piped_tags(e) for e in row.split()])
-            except:
-                import pdb; pdb.set_trace()
-            ret.append(row)
-            for e in row.split(" "):
-                if e != "":
-                    try:
-                        [e1, e2]=e.split(r"/")
-                    except:
-                        raise Exception(e+" "+fh.name)
-                    word_dict[e1]+=1
-                    pos_dict[e2]+=1
+            # First handle the piped tags
+            ret_arr=handle_piped_tags(row)
+            ret.append(" ".join(ret_arr))
+            add_to_dictionary(ret_arr)
     yield " ".join(ret)
 
 for directory in xrange(start_dir, end_dir+1):
@@ -69,6 +91,8 @@ for directory in xrange(start_dir, end_dir+1):
     for f in glob(path.expanduser(path.join(wsj_base_dir, dir_name, '*.pos'))):
         for sentence in get_sets(open(f)):
             print >> wordtag_file, sentence
+
+add_to_dictionary([r"<OOV>/<OOV>"])
 for k,v in sorted(pos_dict.items(), key=lambda(x): x[1], reverse=True):
     print >> tagvocab_file, k, v
 print ""

@@ -1,0 +1,183 @@
+There are 8 GPU machines with two GPU each, qlogin -l gpu=1, nvidia-smi, b0* and g0* 
+
+training_method is decides the update equation. It is either
+        [add_projected, add_naturalparam, mult_exponentiated, mult_prod]
+        add_projected      | additive sgd with probabilities and
+                           | then reprojects them back to probability land
+        add_naturalparam   | additive sgd on a multinomial expressed as
+                           | the natural parameters
+        mult_exponentiated | multiplicative exponentiated sgd with
+                           | probabilities
+        mult_prod          | multiplicative prod SGD.
+	
+python src/predict_tag.py  res/train_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding@toy.dev.tagstrip res/ log/predict_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding@toy.dev.tagstrip
+
+python src/postag_accuracy.py log/predict_tag_rhmm~addlambda0.1~LL~sgd~0.5~l1~0.01~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev~toy_embedding@toy.dev.tagstrip res/
+# OPTIMIZATION        = em, sgd, naturalgrad #LBFGS, EM, SGD, Natural Gradient
+def train_on_file(mo_model, train_fn, num_pass, eta, dev_fn, filetype):
+    for pass_ in xrange(num_pass):
+        for row in open(train_fn, "rb"):
+            row=row.strip().split()
+            if filetype=="sup":
+                sentence, tag = get_sentence_tag_from_row(row)
+                mo_model.update_parameter(mo_model.gradient_sto(sentence, tag)*eta)
+            elif filetype=="unsup":
+                mo_model.update_parameter(mo_model.gradient_so(row)*eta)
+            else:
+                raise ValueError(filetype)
+        eval_on_train_dev("train_on_file, Pass: %d"%pass_, mo_model, train_fn, dev_fn)
+    return
+
+def train_on_twofile(mo_model, sup_train_fn, unsup_train_fn, num_pass, eta, sup_dev_fn):
+    for pass_ in xrange(num_pass):
+        for i, row in enumerate(itertools.izip_longest(open(sup_train_fn, "rb"), open(unsup_train_fn, "rb"))):
+            if row is None:
+                continue
+            elif i%2==0:
+                row=row.strip().split()
+                sentence, tag = get_sentence_tag_from_row(row)
+                mo_model.update_parameter(mo_model.gradient_sto(sentence, tag)*eta)
+            elif i%2==1:
+                row=row.strip().split()
+                mo_model.update_parameter(mo_model.gradient_so(row)*eta)
+        eval_on_train_dev("train_on_twofile, Pass: %d"%pass_, mo_model, sup_train_fn, sup_dev_fn)
+    return
+train_on_file(mo_model, sup_train_fn, num_pass, eta, sup_dev_fn, "sup")
+train_on_file(mo_model, unsup_train_fn, num_pass, eta, sup_dev_fn, "unsup")
+
+mo_model.reinitialize()
+train_on_file(mo_model, unsup_train_fn, num_pass, eta, sup_dev_fn, "unsup")
+train_on_file(mo_model, sup_train_fn, num_pass, eta, sup_dev_fn, "sup")
+
+mo_model.reinitialize()
+train_on_twofile(mo_model, sup_train_fn, unsup_train_fn, num_pass, eta, sup_dev_fn)
+
+# projected gradient is fastest to move currently small
+        # probabilities, when the objective calls for it, while GD in
+        # logspace is slowest to move them.  EG is in between. Because
+        # Projected gradient does φ += ε ∂F/∂φ (followed by additive
+        # renormalization).  EG scales the update size by a factor of
+        # φ, since for small ε, the EG update φ *= exp ε ∂F/∂φ is
+        # close to φ += ε φ ∂F/∂φ (followed by multiplicative
+        # renormalization).  GD in logspace adds another factor of φ
+        # (after shifting by E).
+        # EG can actually be viewed as a projected subgradient method
+        # using generalized relative entropy (D(x || y) = \sum_i x_i
+        # log (x_i/y_i) - x_i + y_i ) as the distance function for
+        # projections (Beck & Teboulle, 2003)
+
+# So most of the non-convex functions I've optimized have been done
+# with LBFGS optimization with one crucial change: any time the
+# optimizer thinks its converged, dump the history cache and force it
+# to flush the current approximation of the inverse hessian and take
+# just a normal gradient step. Most of the Berkeley NLP papers since
+# 2006 which do LBFGS non-convex optimization have used this trick and
+# found it pretty important I believe. 
+
+
+
+# Pylearn2 represents the while loop itself as a class with three
+# things.
+# The algorithm, the model, save_path, save_freq, "extensions".
+# I think these are the most important.
+# The training algorithms are,
+# What is interesting to learn is how the problem has been parametized
+# and the classes defined quite beautifully. The algorithms have a
+# base class, (which specifies only three function continue_training,
+# setup, train) and then the default. Then there are learning_rules
+# for sgd, The main sgd algorithm is
+# pylearn2.training_algorithms.sgd.SGD
+# but there is also batch gradient descent.
+
+# The objective is written as a Theano function. The only problem is
+# that here I would have a faily large number of parameters. So a
+# simple problem could be optimizing a max-ent lm using theano. If I
+# can do that using theano. (and pylearn2) then I can do this also.
+# For this part I found the following code which I can learn from
+# https://github.com/ddahlmeier/neural_lm/blob/master/lbl.py
+# https://github.com/ddahlmeier/neural_lm/blob/master/lbl_nce.py
+# https://github.com/turian/neural-language-model
+# https://github.com/gwtaylor/theano-rnn
+
+# My model has a objective. and during training since I want to
+# leverage both supervised and unsupervised data therefore I need to
+# write 3 kinds of scores
+# 1. score_sto: sentence, tag observed but some of the tags can be
+# missing. this is the most general case.
+# 2. score_ao: 
+# 3. score_so: 
+# (It calculates this using the observed data, and parameters)
+
+# Theano helps me calculate gradients automatically.
+# As long as I can write the score (calculated using DP or not) as a
+# theano function. It is possible by using scan in theano.
+# I need two types of gradients. The gradient I calculate given a
+# supervised data point and the gradient with unsuperrvised datapoint.
+
+# My model has a method to give gradient (wrt parameter)
+# (Given observed data only, and parameters) # Calculate the gradients using Theano
+
+# Train the model using pylearn2/scipy.optimize
+# pylearn2 allows me to quickly switch between different optimization
+# methods. along with tricks of the trade that are a part of
+# optimization business.
+
+# Perform prediction using whatever framework.
+# My model can predict hidden var. (Given observed var, parameters)
+
+# The prediction method would be used in calculating the objective/score
+# anyway. This would be necessary because the objective would be an expectation.
+# So the parameters are an intrinsic part of the model.
+
+# Probability of tag given the previous sequence of words.
+# And we are assuming that the parametrization is the appropriate
+# parametrization to use. The important thing is that we can
+# "efficiently" predict. so we need to maintain that. Infact code for
+# that.
+
+# So generate toy data. and call make on that target all the time.
+# Train the model and then use it as a LM, (calculate the probability
+# efficiently) and get the perpelexity, also make an eval method that
+# gives a tagged sequence, and write code to evaluate it.
+
+
+# TODO
+# 1.[X] Make a function that can serialize and deerialize a model and load parameters from file.
+# 2.[X] Implement the training and prediction part
+# 3.[ ] Test that the score function is correct.
+# 4.[ ] Discuss how we can update, locally normalized models through SGD ?
+# I mean the problem is that let's say we have a 0 order HMM. It is locally normalize, However when we stream through the data there is no guarantee that taking a gradient step to update the probabilities would still keep the model locally normalized. so should we normalize at each step ?
+# Also sampling from log transformed probabilities.
+
+# Show that
+# self = tag_order0hmm("lbl10", "LL", "L1", 0.01, 0.5, False, None, dict(t0=0, t1=1, t2=2), dict(w0=0, w1=1, w2=2))
+# self.score_ao([1], [1])
+# self.score_so([1], [-1])
+# self.gradient_ao([1], [1])
+# self.gradient_so([1], [-1])
+# According to Apps Hungarian
+# mo = model(object)
+# it = iterator
+# cl = class
+# Perform training and testing using the small test data on 3 different types of models.
+# all: # Train_train > Predict_train > Evaluate_train > Tune.parameters + Profile/debug.code (Loop)  > Train_train > Predict_dev
+
+
+# theano.config.compute_test_value = 'warn'
+# x = theano.tensor.dvector('x')
+# f = theano.function([x], x * 5)
+# x_printed = theano.printing.Print('this is a very important value')(x)
+# f_with_print = theano.function([x], x_printed * 5)
+# pp, debugprint, printing.pydotprint
+
+# Every Apply node will be printed out, along with its position in the graph
+# the arguments to the functions perform or c_code and the output it computed
+# you can do something like
+# numpy.isnan(output[0]).any()
+# def inspect_inputs(i, node, fn):
+#     print i, node, "input(s) value(s):", [input[0] for input in fn.inputs],
+# def inspect_outputs(i, node, fn):
+#     print "output(s) value(s):", [output[0] for output in fn.outputs]
+# mode=theano.compile.MonitorMode(
+#                         pre_func=inspect_inputs,
+#                         post_func=inspect_outputs)

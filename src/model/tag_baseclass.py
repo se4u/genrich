@@ -4,10 +4,6 @@ the order0hmm tagger as well as the more baroque taggers.
 # Created: 13 October 2014
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
-from warnings import warn
-
-warn("""When you subclass this, make sure that the score is optimal at
-minima. The update method would be incorrect otherwise!""")
 
 class tag_baseclass(object):
     """This class decsribes all the functionalities that a model would

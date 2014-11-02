@@ -5,46 +5,52 @@ data.
 # Created: 13 October 2014
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
-import math, yaml, theano, logging
+import math, theano, logging, sys, os #, itertools
 from tag_baseclass import tag_baseclass
 import numpy as np
 import theano.tensor as T
 from theano import shared, function
 from theano.ifelse import ifelse
 from warnings import warn
-
-debug_logger=logging.getlogger("debug")
-debug_logger.addHandler(logging.StreamHandler)
-debug_logger.setLevel(logging.DEBUG)
+from yaml import load, dump
+from yaml import CDumper as Dumper
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 # emb means embedding
 # App Hungarian
 #   tg_ means theano graph object
 #   tf_ means theano function object
-def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id, tg_lp_tag_table,
-                                       tg_tag_emb, tg_word_emb):
-    tg_tag_word_dot=T.dot(tg_word_emb, tg_tag_emb[tg_tag_id, :])
-    tg_lp_word_given_tag_table=T.log(T.nnet.softmax(tg_tag_word_dot))
-    # The extra 0 is because the softmax creates a row tensor
-    tg_lp_word_given_tag=tg_lp_word_given_tag_table[0, tg_word_id]
-    tg_lp_tag=tg_lp_tag_table[tg_tag_id]
-    return T.sum(tg_lp_tag + tg_lp_word_given_tag)
+def log_softmax(idx, table):
+    return table[idx] - log_sum_exp(table)
 
 def log_sum_exp(x):
-    debug_logger.debug("ran log_sum_exp")
+    logging.debug("ran log_sum_exp")
     return T.log(T.sum(T.exp(x - T.max(x)))) + T.max(x)
 
-def order0_ll_score(tg_tag_id, tg_word_id, tg_lp_tag_table, tg_tag_emb, tg_word_emb,
+def get_lp_from_natural_param(idx, table):
+    return T.sum(T.log(T.nnet.softmax(table))[0, idx])    
+
+def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id, tg_lp_tag_np_table,
+                                       tg_tag_emb, tg_word_emb):
+    tg_tag_word_dot=T.dot(tg_word_emb, tg_tag_emb[tg_tag_id, :])
+    tg_lp_word_given_tag=get_lp_from_natural_param(tg_tag_id, tg_tag_word_dot)
+    tg_lp_word_given_tag.name="tg_lp_word_given_tag"
+    tg_lp_tag=get_lp_from_natural_param(tg_tag_id, tg_lp_tag_np_table)
+    tg_lp_tag.name="tg_lp_tag"
+    return tg_lp_tag + tg_lp_word_given_tag
+
+def order0_ll_score(tg_tag_id, tg_word_id, tg_lp_tag_np_table, tg_tag_emb, tg_word_emb,
                     num_tag):
     warn(" ifelse had better be lazy evaluated !!")
+    
     return ifelse(T.gt(tg_word_id, -1),
                   order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id,
-                                                     tg_lp_tag_table,
+                                                     tg_lp_tag_np_table,
                                                      tg_tag_emb, tg_word_emb),
                   log_sum_exp(theano.map(fn=order0_ll_score_given_word_and_tag,
                                    sequences=[T.arange(num_tag)],
                                    non_sequences=[tg_word_id,
-                                                  tg_lp_tag_table,
+                                                  tg_lp_tag_np_table,
                                                   tg_tag_emb,
                                                   tg_word_emb],
                                    name="order0_ll_score_map")[0])
@@ -83,114 +89,134 @@ class tag_order0hmm(tag_baseclass):
                  param_filename,
                  tag_vocab,
                  word_vocab,
-                 training_method):
+                 test_time=True):
         """The cpd_type defines the type of cpd to use, including the
         smoothing and the model, hinton's lbl or structured sparse
         stuff. [lbl<int>, addlambda<float>]
         
         The objective_type is either [LL, NCE]
         The param_reg_type is either [L1, L2]
-
+        param_reg_weight is weight of the regularization term
         unsup_ll_weight is a float that decides the weight given to
         the unsupervised training corpus compared to the supervised
         training examples. Its value is typically close to 1e-3
 
         tag_vocab is a dictionary that maps tags to indices
-        word_vocab is a dictionary that maps words to indices
-
-        training_method is decides the update equation. It is either
-        [add_projected, add_naturalparam, mult_exponentiated, mult_prod]
-        add_projected      | additive sgd with probabilities and
-                           | then reprojects them back to probability land
-        add_naturalparam   | additive sgd on a multinomial expressed as
-                           | the natural parameters
-        mult_exponentiated | multiplicative exponentiated sgd with
-                           | probabilities
-        mult_prod          | multiplicative prod SGD. 
+        word_vocab is a dictionary that maps words to indices.
         """
         if init_from_file:
-            data=yaml.load(open(param_filename, "rb"))
+            data=load(open(param_filename, "rb"))
             self.tag_vocab=data["tag_vocab"]
             self.word_vocab=data["word_vocab"]
             self.cpd_type=data["cpd_type"]
-            self.num_tag=len(tag_vocab)
-            self.num_word=len(word_vocab)
+            self.num_tag=len(self.tag_vocab)
+            self.num_word=len(self.word_vocab)
             self._embedding_size=data["_embedding_size"]
-            tag_emb_arr=np.array(data["tag_emb_arr"], dtype=np.double)
-            word_emb_arr=np.array(data["word_emb_arr"], dtype=np.double)
+            self.tag_emb_arr=np.loads(data["tag_emb_arr"])
+            self.word_emb_arr=np.loads(data["word_emb_arr"])
             self._lambda=data["_lambda"]
             self.objective_type=data["objective_type"]
             self.param_reg_type=data["param_reg_type"]
-            unsup_ll_weight=data["unsup_ll_weight"]
-            param_reg_weight=data["param_reg_weight"]
+            self.unsup_ll_weight=data["unsup_ll_weight"]
+            self.param_reg_weight=data["param_reg_weight"]
         else:
             self.tag_vocab=tag_vocab
             self.word_vocab=word_vocab
             self.cpd_type=get_cpd_type(cpd_type)
             self.num_tag=len(tag_vocab)
             self.num_word=len(word_vocab)
+            self._embedding_size=None
+            self.tag_emb_arr=None
+            self.word_emb_arr=None
+            self._lambda=None
             if self.cpd_type=="lbl":
                 self._embedding_size=int(cpd_type[3:])
-                tag_emb_arr=get_random_emb(self.num_tag, self._embedding_size)
-                word_emb_arr=get_random_emb(self.num_word, self._embedding_size)
+                self.tag_emb_arr=get_random_emb(self.num_tag,
+                                                self._embedding_size)
+                self.word_emb_arr=get_random_emb(self.num_word,
+                                                 self._embedding_size)
             elif self.cpd_type=="addlambda":
                 self._lambda=float(cpd_type[9:])
             self.objective_type=objective_type
             self.param_reg_type=param_reg_type
-            # unsup_ll_weight (Just for visual correspondence)
-            # param_reg_weight
+            self.unsup_ll_weight=unsup_ll_weight 
+            self.param_reg_weight= param_reg_weight
         
-        lp_tag=math.log(1/float(self.num_tag))
-        self._tg_lp_tag_table=shared(np.ones((self.num_tag, 1),np.double)*lp_tag)
-        warn("update tg_lp_tag_table using its set_value method only")
+        lp_tag_np=math.log(1/float(self.num_tag))
+        self._tg_lp_tag_np_table=shared(
+            np.ones((1, self.num_tag),np.float)*lp_tag_np)
+        warn("update tg_lp_tag_np_table using its set_value method only")
         if self.cpd_type=="lbl":
-            self._tg_tag_emb=shared(tag_emb_arr, borrow=True)
-            self._tg_word_emb=shared(word_emb_arr, borrow=True)
+            self._tg_tag_emb=shared(self.tag_emb_arr, borrow=True)
+            self._tg_word_emb=shared(self.word_emb_arr, borrow=True)
+            self.params=[self._tg_lp_tag_np_table,
+                         self._tg_tag_emb,
+                         self._tg_word_emb]
             warn("Update the _tg_tag_emb, _tg_word_emb using only set_value")
         elif self.cpd_type=="addlambda":
+            self.params=None
             raise NotImplementedError
         
         # Now I'd use the objective and unsup_ll_weight
-        self.unsup_ll_weight=T.constant(unsup_ll_weight, name="unsup_ll_weight",
-                                        dtype=np.double)
-        self.param_reg_weight=T.constant(param_reg_weight, name="param_reg_weight",
-                                         dtype=np.double)
+        self.unsup_ll_weight=T.constant(self.unsup_ll_weight,
+                                        name="unsup_ll_weight",
+                                        dtype=np.float)
+        self.param_reg_weight=T.constant(self.param_reg_weight,
+                                         name="param_reg_weight",
+                                         dtype=np.float)
         tag_ids=T.ivector("tag_ids")
         word_ids=T.ivector("word_ids")
-        if objective_type=="LL" and self.cpd_type=="lbl":
-            if param_reg_type=="L1": 
-                self.tg_score_sto= self.score_sto_ll_tg(tag_ids, word_ids) - \
-                    (self.param_reg_weight *
-                     (T.sum(T.abs_(self._tg_tag_emb)) +
-                      T.sum(T.abs_(self._tg_word_emb))
-                      )
-                     )
-            elif param_reg_type=="L2":
-                self.tg_score_sto= self.score_sto_ll_tg(tag_ids, word_ids) - \
-                    (self.param_reg_weight *
-                     (T.sum(T.sqr(self._tg_tag_emb)) +
-                      T.sum(T.sqr(self._tg_word_emb))
-                      )
-                     )
+        if self.objective_type=="LL" and self.cpd_type=="lbl":
+            if test_time==False:
+                if self.param_reg_type=="L1": 
+                    penalty = -(self.param_reg_weight *
+                                (T.sum(T.abs_(self._tg_tag_emb)) +
+                                 T.sum(T.abs_(self._tg_word_emb))))
+                elif self.param_reg_type=="L2":
+                    penalty = -(self.param_reg_weight *
+                                (T.sum(T.sqr(self._tg_tag_emb)) +
+                                 T.sum(T.sqr(self._tg_word_emb))))
+                else:
+                    raise NotImplementedError(
+                        "objective_type: %s, param_reg_type: %s, self.cpd_type: %s"%(
+                            objective_type, param_reg_type, self.cpd_type))
+                # Penalize only when you are not testing.
+                self.tg_score_sto=self.score_sto_ll_tg(tag_ids, word_ids)+penalty
             else:
-                raise NotImplementedError(
-                    "objective_type: %s, param_reg_type: %s, self.cpd_type: %s"%(
-                        objective_type, param_reg_type, self.cpd_type))
+                self.tg_score_sto=self.score_sto_ll_tg(tag_ids, word_ids)
             tg_score_ao=self.tg_score_sto
             tg_score_so=self.tg_score_sto*self.unsup_ll_weight
-            tg_gradient_ao=T.grad(tg_score_ao,[self._tg_lp_tag_table,
-                                               self._tg_tag_emb,
-                                               self._tg_word_emb])
-            tg_gradient_so=T.grad(tg_score_so, [self._tg_lp_tag_table,
-                                                self._tg_tag_emb,
-                                                self._tg_word_emb])
+            
+            self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
+            self.tg_gradient_so=T.grad(tg_score_so,self.params)
+            
             # Basically so has the same signature you just put -1 for tag-ids
             self._score_basic=function([tag_ids, word_ids],
-                                      self.score_sto_ll_tg(tag_ids, word_ids))
-            self._score_ao=function([tag_ids, word_ids], tg_score_ao)
-            self._score_so=function([tag_ids, word_ids], tg_score_so)
-            self._gradient_ao=function([tag_ids, word_ids], tg_gradient_ao)
-            self._gradient_so=function([tag_ids, word_ids], tg_gradient_so)
+                                      self.score_sto_ll_tg(tag_ids, word_ids),
+                                       name="_score_basic")
+            self._score_ao=function([tag_ids, word_ids], tg_score_ao,
+                                    name="_score_ao")
+            self._score_so=function([tag_ids, word_ids], tg_score_so,
+                                    name="_score_so")
+            eta=T.fscalar("eta")
+            
+            self._update_ao=function([eta, tag_ids, word_ids],
+                                     self.tg_gradient_ao,
+                                     name="_update_ao",
+                                     updates=[(p, p+eta*g)
+                                              for (g, p)
+                                              in zip(self.tg_gradient_ao,
+                                                     self.params)],
+                                     )
+                                     
+            self._update_so=function([eta, tag_ids, word_ids], self.tg_gradient_so,
+                                     name="_update_so",
+                                     updates=[(p, p+eta*g)
+                                              for (g, p)
+                                              in zip(self.tg_gradient_so,
+                                                     self.params)]
+                                     )
+            
         else:
              raise NotImplementedError(
                  "objective_type: %s, self.cpd_type: %s"%(
@@ -200,11 +226,12 @@ class tag_order0hmm(tag_baseclass):
     def score_sto_ll_tg(self, tag_ids, word_ids):
         """sto means sentence and tag observed.
         This function returns a tg object. which can then be compiled
-        (or further operated on) 
+        (or further operated on) . This function assumes that its words
+        and tags are integers
         """
         output, _ = theano.map(fn=order0_ll_score, 
                                sequences=[tag_ids, word_ids], 
-                               non_sequences=[self._tg_lp_tag_table,
+                               non_sequences=[self._tg_lp_tag_np_table,
                                               self._tg_tag_emb,
                                               self._tg_word_emb,
                                               self.num_tag],
@@ -212,27 +239,32 @@ class tag_order0hmm(tag_baseclass):
         return T.sum(output)
     
     def score_ao(self, tags, words):
-        return self._score_ao([self.tag_vocab[t] for t in tags],
-                              [self.word_vocab[w] for w in words])
+        """This function receives actual words and tags (not indices!) 
+        and then returns their probabilties.
+        """
+        return self._score_ao([self.get_from_tag_vocab(t) for t in tags],
+                              [self.get_from_word_vocab(w) for w in words])
     
     def score_so(self, words):
         return self._score_ao([-1]*len(words),
-                              [self.word_vocab[w] for w in words])
+                              [self.get_from_word_vocab(w) for w in words])
     
-    def gradient_ao(self, tags, words):
-        """ The gradient when both tags and sentences are observed.
+    def update_ao(self, eta, tags, words):
+        """ The update when both tags and sentences are observed.
         Note that in the case of cpd_type="lbl" we return a list with
-        gradients for the following parameters
-        [self._tg_lp_tag_table, self._tg_tag_emb, self._tg_word_emb]
+        gradients for self.params
         """
-        return self._gradient_ao([self.tag_vocab[t] for t in tags],
-                                 [self.word_vocab[w] for w in words])
+        
+        return self._update_ao(eta,
+                               [self.get_from_tag_vocab(t) for t in tags],
+                               [self.get_from_word_vocab(w) for w in words])
     
-    def gradient_so(self, words):
+    def update_so(self, eta, words):
+        """ This is the update for unsupervised examples.
         """
-        """
-        return self._gradient_so([-1]*len(words),
-                                 [self.word_vocab[w] for w in words])
+        return self._update_so(eta,
+                               [-1]*len(words),
+                               [self.get_from_word_vocab(w) for w in words])
     
     def get_perplexity(self, sentence):
         "Return the actual perplexity of the unsupervised data"
@@ -241,76 +273,6 @@ class tag_order0hmm(tag_baseclass):
         else:
             raise NotImplementedError
     
-    def set_parameter(self, pd):
-        """ pd means parameter dictionary
-        """
-        if self.cpd_type=="lbl":
-            self._tg_lp_tag_table.set_value(pd["lp_tag_table"])
-            self._tg_tag_emb.set_value(pd["tag_emb"])
-            self._tg_word_emb.set_value(pd["word_emb"])
-        else:
-            raise NotImplementedError
-        return
-    
-    def get_parameter(self, borrow=False):
-        """This function returns me a COPY of the current params.
-        It includes EVERYTHING! The params used in the lm,
-        the params used for state transitions of the tagging model.
-
-        Do not rely on borrowing happening all the time !!
-        """
-        if self.cpd_type=="lbl":
-            return dict(lp_tag_table=self._tg_lp_tag_table.get_value(borrow=borrow),
-                        tag_emb=self._tg_tag_emb.get_value(borrow=borrow),
-                        word_emb=self._tg_word_emb.get_value(borrow=borrow)
-                        )
-        else:
-            raise NotImplementedError
-    
-    # TRAIN
-    def stochastic_train(self, eta, tags=None, words=None):
-        """ Given the learning rate eta, words and corresponding tags
-        update the parameters using the SGD update. Note that eta is a
-        positive float with a small value.
-        
-        Also note that tags can be None but words cannot be.
-        """
-        # THIS FUNCTION HAS NOT BEEN TESTED. TEST THAT THE UPDATES
-        # ARE CORRECT. Also renormalize the log-probabilities so they add upto 0
-        # THIS GOES INTO EXPONENTIATED GRADIENT, PROJECTED GRADIENT ETC.
-        # DO THIS IN A WAY THAT YOU DONT FALL INTO LOCAL OPTIMA
-        # projected gradient is fastest to move currently small
-        # probabilities, when the objective calls for it, while GD in
-        # logspace is slowest to move them.  EG is in between. Because
-        # Projected gradient does φ += ε ∂F/∂φ (followed by additive
-        # renormalization).  EG scales the update size by a factor of
-        # φ, since for small ε, the EG update φ *= exp ε ∂F/∂φ is
-        # close to φ += ε φ ∂F/∂φ (followed by multiplicative
-        # renormalization).  GD in logspace adds another factor of φ
-        # (after shifting by E).
-        # EG can actually be viewed as a projected subgradient method
-        # using generalized relative entropy (D(x || y) = \sum_i x_i
-        # log (x_i/y_i) - x_i + y_i ) as the distance function for
-        # projections (Beck & Teboulle, 2003)
-        assert words is not None
-        if self.cpd_type=="lbl":
-            if tags is None:
-                grad_lp_tag_table, grad_tag_emb, grad_word_emb = \
-                    self.gradient_so(words)
-            else:
-                grad_lp_tag_table, grad_tag_emb, grad_word_emb = \
-                    self.gradient_ao(tags, words)
-            
-            lp_tags = self._tg_lp_tag_table.get_value()+grad_lp_tag_table
-            lp_tags = lp_tags - lp_tags.mean(axis=0)
-            print self._tg_lp_tag_table.get_value(), grad_lp_tag_table
-            self._tg_lp_tag_table.set_value(lp_tags)
-            print self._tg_lp_tag_table.get_value()
-            self._tg_tag_emb.set_value(self._tg_tag_emb.get_value()+grad_tag_emb)
-            self._tg_word_emb.set_value(self._tg_word_emb.get_value()+grad_word_emb)
-        else:
-            raise NotImplementedError
-
     # PREDICT
     def predict_posterior_tag_sequence(self, words):
         """ Given the input words which tag would be most appropriate
@@ -318,14 +280,16 @@ class tag_order0hmm(tag_baseclass):
         that tag sequence. 
         """
         tags=[None]*len(words)
+        score=[None]*len(words)
         for i,word in enumerate(words):
-            wi=self.word_vocab[word]
-            tags[i]=max(((tag, self.score_ao([ti], [wi]))
+            wi=self.get_from_word_vocab(word)
+            tags[i], score[i]=max(((tag, self._score_ao([ti], [wi]))
                          for (tag, ti) in self.tag_vocab.iteritems()
                          ),
                         key=lambda x: x[1])
-        return tags
-
+            score[i]=float(score[i])
+        return tags, score
+    
     def predict_viterbi_tag_sequence(self, words):
         """ Given the input words which sequence of tags would
         maximize the perplexity. This function finds that sequence.
@@ -339,9 +303,8 @@ class tag_order0hmm(tag_baseclass):
         Assume that "." is the EOS tag. As soon as you generate "."
         stop generating further
         """
-        # NOTE: self._tg_lp_tag_table_arr contains log probabilities
-        # of a multinomial over tags. There should be a trick to
-        # sample from that !
+        # NOTE: self._tg_lp_tag_np_table_arr contains natural parameters for the log probabilities
+        # There should be a trick to sample from that !
         raise NotImplementedError
         while 1:
             # Draw a tag.
@@ -351,4 +314,50 @@ class tag_order0hmm(tag_baseclass):
             elif self.cpd_type=="addlambda":
                 pass
             break
+        return
+    
+    # Following functions are utility functions
+    def save(self, filename):
+        """Save the object's attributes to the yaml filename
+        """
+        
+        f=open(filename, "wb")
+        try:
+            f.write(dump(dict(
+                        tag_vocab=self.tag_vocab,
+                        word_vocab=self.word_vocab,
+                        cpd_type=self.cpd_type,
+                        _embedding_size=self._embedding_size,
+                        tag_emb_arr=self.tag_emb_arr.dumps(),
+                        word_emb_arr=self.word_emb_arr.dumps(),
+                        _lambda=self._lambda,
+                        objective_type=self.objective_type,
+                        param_reg_type=self.param_reg_type,
+                        unsup_ll_weight= \
+                            self.unsup_ll_weight.get_scalar_constant_value(),
+                        param_reg_weight= \
+                            self.param_reg_weight.get_scalar_constant_value()
+                        ),
+                         Dumper=Dumper,
+                         default_flow_style=False))
+        except Exception as exc:
+            f.close()
+            os.remove(filename)
+            print exc
+        finally:
+            f.close()
+                
+        
+    def get_from_word_vocab(self, word):
+        try:
+            return self.word_vocab[word]
+        except:
+            return self.word_vocab["<OOV>"]
+        
+    def get_from_tag_vocab(self, tag):
+        try:
+            return self.tag_vocab[tag]
+        except:
+            return self.tag_vocab["<OOV>"]
+        
     
