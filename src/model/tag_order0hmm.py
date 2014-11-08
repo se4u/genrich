@@ -10,8 +10,6 @@ from tag_baseclass import tag_baseclass
 import numpy as np
 import theano.tensor as T
 from theano import shared, function
-from theano.ifelse import ifelse
-from warnings import warn
 from yaml import load, dump
 from yaml import CDumper as Dumper
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
@@ -29,14 +27,16 @@ def log_softmax(idx, table):
     return table[idx] - denominator
 
 def get_lp_from_natural_param(idx, table):
-    # return T.sum(T.log(T.nnet.softmax(table))[0, idx])
+    """ STATUS: Tested
+    """
     return T.sum(log_softmax(idx, table.flatten()))    
 
-def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id, tg_lp_tag_np_table,
+def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id,
+                                       tg_lp_tag_np_table,
                                        tg_tag_emb, tg_word_emb):
     tg_tag_word_dot=T.dot(tg_word_emb, tg_tag_emb[tg_tag_id, :])
     # Log probability of word given tag
-    tg_lp_word_given_tag=get_lp_from_natural_param(tg_tag_id, tg_tag_word_dot)
+    tg_lp_word_given_tag=get_lp_from_natural_param(tg_word_id, tg_tag_word_dot)
     # Log probability of tag
     tg_lp_tag=get_lp_from_natural_param(tg_tag_id, tg_lp_tag_np_table)
     # Return the sum
@@ -55,8 +55,8 @@ def order0_ll_score_given_word_only(tg_word_id,
                                   name="order0_ll_score_map")[0])
 
 def get_random_emb(vocab_size, embedding_size):
-        emb_size=(vocab_size, embedding_size)
-        emb_arr=np.random.random_sample(emb_size)
+        emb_arr=np.random.randn(vocab_size,
+                                embedding_size)/pow(vocab_size, 0.5)
         return emb_arr
 
 def get_cpd_type(cpd_type):
@@ -162,14 +162,13 @@ class tag_order0hmm(tag_baseclass):
             self.tag_np_arr=np.ones((1, self.num_tag),np.float)*lp_tag_np
         
         self._tg_lp_tag_np_table=shared(self.tag_np_arr, borrow=True)
-        warn("update tg_lp_tag_np_table using its set_value method only")
+        
         if self.cpd_type=="lbl":
             self._tg_tag_emb=shared(self.tag_emb_arr, borrow=True)
             self._tg_word_emb=shared(self.word_emb_arr, borrow=True)
             self.params=[self._tg_lp_tag_np_table,
                          self._tg_tag_emb,
                          self._tg_word_emb]
-            warn("Update the _tg_tag_emb, _tg_word_emb using only set_value")
         elif self.cpd_type=="addlambda":
             self.params=None
             raise NotImplementedError
@@ -189,10 +188,10 @@ class tag_order0hmm(tag_baseclass):
             tg_score_ao=self._score_ao_tg(tag_ids, word_ids)+\
                 self.get_penalty_for_lbl(test_time)
             if test_time:
-                tg_score_so=self._score_so_tg(tag_ids, word_ids)
+                tg_score_so=self._score_so_tg(word_ids)
             else:
-                tg_score_so=self._score_so_tg(word_ids)*\
-                    self.unsup_ll_weight + self.get_penalty_for_lbl(test_time)
+                tg_score_so=self._score_so_tg(word_ids)*self.unsup_ll_weight + \
+                    self.get_penalty_for_lbl(test_time)
             
             self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
             self.tg_gradient_so=T.grad(tg_score_so,self.params)
@@ -265,7 +264,6 @@ class tag_order0hmm(tag_baseclass):
         Note that in the case of cpd_type="lbl" we return a list with
         gradients for self.params
         """
-        
         return self._update_ao(eta,
                                [self.get_from_tag_vocab(t) for t in tags],
                                [self.get_from_word_vocab(w) for w in words])

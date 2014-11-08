@@ -32,11 +32,6 @@ def add_to_dictionary(row):
             pos_dict[e2]+=1
     return
 
-def make_word_lower_case_if_lowercase_in_dictionary(w):
-    if w.lower() in word_dict:
-            w=w.lower()
-    return w
-
 def has_digits(w, num):
     return sum(e.isdigit() for e in w) > num
 
@@ -53,8 +48,7 @@ def handle_piped_tags(row):
         [a, b]=e.split(r"/")
         if "|" in b:
             b=pick_high_priority_tag(b.split("|"))
-        a=make_word_lower_case_if_lowercase_in_dictionary(a)
-        a=mark_certain_words_numeric(a)
+        a=mark_certain_words_numeric(a.lower())
         ret_arr.append(a+"/"+b)
     return ret_arr
 

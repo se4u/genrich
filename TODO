@@ -181,3 +181,125 @@ train_on_twofile(mo_model, sup_train_fn, unsup_train_fn, num_pass, eta, sup_dev_
 # mode=theano.compile.MonitorMode(
 #                         pre_func=inspect_inputs,
 #                         post_func=inspect_outputs)
+
+
+
+take many steps along the supervised and then interleave between supervised and unsupervised.
+
+Run a bigram model and see the differences I get ff
+
+Add the idea to th google doc that we can use the tag vector with atensor (tag vector may be one hot) and thenuse those to predict the tags.
+
+also the bigram i s
+
+Implement two taggers. One is a zero order word based probability.
+Then build an accuracy evaluator.
+Also add tuning support, proper training support, and then dev.
+Another is an HMM based tagger. Use Theano for both. do it so that you
+get comfortable with the api etc.
+WRITE A MAXENT LM IN THEANO.
+
+We present enriched generative models for tagged sentences and
+dependency-parsed sentences.  There's been a lot of discussion in the
+literature of CRFs and MEMMs.  These are discriminative models, which
+are rich and robust to model misspecification but also cannot be
+trained on unsupervised examples.  Standard generative alternatives
+such as HMMs are less rich.  We show how generative models can be
+enriched and still be efficient for use with dynamic programming
+(i.e., we do not go all the way to a globally normalized joint model
+although we discuss the possibility).  In particular, we can condition
+on all the words of the input sentence just as for CRFs, but our
+generative approach allows semi-supervised training.
+
+This class of models has not been entirely missed before, as
+generative models with latent tag and parse variables have been
+previously investigated in the language modeling community, where the
+goal is to predict words.  However, they have apparently [check!] not
+been used to predict the tags and parses, a setting in which (in
+contrast to language modeling) one can do efficient decoding with an
+unbounded amount of sentence context.  Also, our dependency syntax
+model differs from the SLM and related models in the LM literature --
+it is top-down generative rather than history-based, and requires a
+novel parsing algorithm.
+
+1. [ ] Change the size of tagset in unsupervised tagging.
+2. [ ] compare diff model topologies as LM, as Taggers
+3. [ ] Train/eval in the same way (regularization, jackknifing, sup-unsup)
+4. [ ] /joint prob of tagged words, tagging, LM, using sup data and
+   unsup data
+   5. [ ] /cite the paper that was using HMM
+   6. [ ] The main clam is that our work gives richer models exist for
+      tagging/parsing and they can work better for tagging on small datasets.
+      7. [ ] Cite multi conditional learning.
+      8. [ ] Read the paper disitrbuted, lexical semantic, syntactic LM by
+         shaojun wang, for backoff strategies.
+	 9. [ ] The tree parse version
+	 10. [ ] Cite multi conditional learnng by maccallum
+	 11. [ ] Vary window length
+	 12. [ ] We will need to have unbounded istory of at least for tagging
+	     to make our model sufficiently different from the one in the paper
+	         by shaoun wang
+		 13. [ ] Ask TIM for features for CRFs that model unbounded contexts
+		 14. [ ] Look at multi floor chinese restaurant process/franchise
+		 15. [ ] Non parametric intepolation -> Seuqnce memoizer
+		 16. [ ] Back off smoothing is justified as a small approximation to
+		     the hierarchical bayesian stuff.
+		     17. [ ] Hierarchical bayesian frank wood, (multi floor chinese restaurant process)
+
+		     http://www.stats.ox.ac.uk/~teh/research/compling/WooGasArc2011a.pdf
+		     http://ilk.uvt.nl/~stehouwer/files/ICGI2010.pdf
+		     http://www.di.ens.fr/~fbach/anil_emnlp.pdf
+
+		     The Data Sheet
+		     I still have to use this model for tagging and then to get an accuracy.
+		     I also have to get the gradients of either the likelihood or the objective.
+		     I have not added a tree like hierarchy for fast enumeration of the
+		     partitions function nor have I implemented NCE yet.
+		     Also currently I am treating the embeddings as fixed not as parameters
+		     to be learnt ? Should I learn them ?
+
+		     Dependency Shift reduce (generative vs discriminative)
+		     then the NCE and how does it fare against importance sampling
+		     This leads to a thought for us: Train a hierarchy of
+		     stepwise-generation models where each model generates the sentence in
+		     successively larger steps. 
+		     1. One bit at a time (using a clustering of words).
+		     2. One word or tag at a time.
+		     Write paper.
+		     Write pseudo code of project - in terms of building blocks like earley
+		     parser, inside outside and forward backward.
+		     Implement CRF / MEMM / HMM
+
+		     NEXT STEPS: 1a and 1b in parallel, 1c less important, 2a depends on 1a and 1b
+		     1a. Figure out what is meant by tree structured sparsity and
+		     Nellakanti's work. Specifically How does it apply to our project for
+		     selecting the model ? How can sparsity help set the order of the HMM
+		     dynamically ? This would affect how I build the later models
+
+		     1b. we decided that I should build at least the following pipeline
+		     (since parts this pipeline would be used for many other model
+		     topologies)
+		     1. Use the model to tag words
+		     2. Compute accuracy of the model
+		     3. Use Chokkan crfsuite as the baseline CRF tagger.
+		     4. Clean up the test suite
+		     5. Build GMEMM likelihood as well
+		     6. Use Auto-Diff to calculate the gradients.
+		     7. Learn parameters of the model
+
+		     1c. Look at different ways of formulating the RNN structure, (Note that word2vec uses a simpler model, It is flat and uses previous 15 words and learns a single matrix for all of them.)
+		     2a. Compare Different model topologies ( HMM, Ngram, HNMM) (NGram, MEMM, GMEMM)
+		     a. as LM
+		     b. as tagger
+		     c. as unsupervised tagger (This is not a numeric comparison, we want to understand what the model topology learns)
+
+		     - Train/Eval all in the same way
+		     a. Regularization
+		     b. Jackknifing
+		     c . Sup-Unsup LL mix
+		     d. Different sup/unsup training set sizes
+		     e. Different sizes of target tagset in unsupervised tagging case.
+
+		     - Parametrization
+		     Log Linear (The features are the words/tags being predcited, n_w previous words, n_t previous generated tags)
+		     Prune if frequency not enough

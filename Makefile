@@ -1,6 +1,9 @@
 .PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train
 .SECONDARY:
-PYCMD := OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=fast_run,lib.amdlibm=True,mode=FAST_RUN,gcc.cxxflags=-O9 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True' time python # -m pdb
+PYTEMPLATE = OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=$1,lib.amdlibm=True,mode=$2,gcc.cxxflags=-$3 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True,profile=$4' time python
+PYCMD := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,False)
+PYLIGHT := $(call PYTEMPLATE,fast_compile,FAST_COMPILE,O1,False)
+PYPROFILE := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,True)
 NOSETEST_CMD := nosetests --verbosity=3 --with-doctest --exe --pdb --processes=1
 test_all: # --failed --with-profile
 	$(NOSETEST_CMD)  -w src/test
@@ -62,16 +65,26 @@ predict_tag_generic: $(MYDEP1) $(MYDEP2)
 # WORD_VOCAB_FILE     = name of the word vocab file
 # SUP_TRAIN_FILE      = name of the training file with supervised data
 # UNSUP_TRAIN_FILE    = name of the training file with unsupervised data
-# SUP_DEV_FILE        = name of the dev data file
-# 2 example targets are
-# res/train_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train~unsup.txt~wsj_tag.dev
-# res/train_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev
-# SAVE_FILE            = name of the output pickle of the trained file
+# VALIDATION_FILE     = name of the dev data file
+# RNG_SEED            = <int> Seed for the RNG
+# BATCH_SIZE          = <int> The size of the minibatch
+# EPOCH               = <int> Number of times to go over the training data
+# LEARNING_RATE       = <float> rate update method, Initial learning rate.
+# OPTIMIZATION_METHOD = ADAGRAD, SGD
+# VALIDATION_FREQ     = <int> check performance on the validation data
+#                             after this many batches
+# VALIDATION_ACTION   = <string> Specify what we'd do after each validation step
+# SAVE_FILE           = name of the output pickle of the trained file
 TRAIN_OPT_EXTRACTOR = $(word $1,$(subst ~, ,$*))
 TRAIN_OPT_EXTRACTOR2 = $(word $1,$(subst ~, ,%))
-default_train: res/train_tag_order0hmm~lbl100~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev
-res/train_tag_% : #res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train.word.vocab
-	$(PYCMD) src/train_tag.py MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
+DEFAULT := order0hmm~lbl100~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~100~10~0.01~sgd~25~NOACTION
+# TARGET: By calling any one of these I can either do quick compile or
+# turn on profiling of the code. 
+res_train: res/train_tag_$(DEFAULT)
+quick_train: quick/train_tag_$(DEFAULT)
+profile_train: profile/train_tag_$(DEFAULT)
+# 
+TRAIN_TAG_CMD = MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
 	        CPD_TYPE=$(call TRAIN_OPT_EXTRACTOR,2) \
 	        OBJECTIVE_TYPE=$(call TRAIN_OPT_EXTRACTOR,3) \
 	        PARAM_REG_TYPE=$(call TRAIN_OPT_EXTRACTOR,4) \
@@ -83,26 +96,64 @@ res/train_tag_% : #res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train.word.voca
 	        WORD_VOCAB_FILE=res/$(call TRAIN_OPT_EXTRACTOR,10) \
 	        SUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,11) \
 	        UNSUP_TRAIN_FILE=res/$(call TRAIN_OPT_EXTRACTOR,12) \
-	        SUP_DEV_FILE=res/$(call TRAIN_OPT_EXTRACTOR,13) \
-	        SAVE_FILE=$@ 
-
+	        VALIDATION_FILE=res/$(call TRAIN_OPT_EXTRACTOR,13) \
+		RNG_SEED=$(call TRAIN_OPT_EXTRACTOR,14) \
+		BATCH_SIZE=$(call TRAIN_OPT_EXTRACTOR,15) \
+		EPOCH=$(call TRAIN_OPT_EXTRACTOR,16) \
+		LEARNING_RATE=$(call TRAIN_OPT_EXTRACTOR,17) \
+		OPTIMIZATION_METHOD=$(call TRAIN_OPT_EXTRACTOR,18) \
+		VALIDATION_FREQ=$(call TRAIN_OPT_EXTRACTOR,19) \
+		VALIDATION_ACTION=$(call TRAIN_OPT_EXTRACTOR,20)
+TRAIN_CMD = src/train_tag.py \
+		$(TRAIN_TAG_CMD) \
+	        SAVE_FILE=$@
+# SOURCE: res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train.word.vocab
+res/train_tag_% : 
+	$(PYCMD) \
+		$(TRAIN_CMD)
+quick/train_tag_% : 
+	$(PYLIGHT) \
+		$(TRAIN_CMD)
+profile/train_tag_% : 
+	$(PYPROFILE) \
+		$(TRAIN_CMD)
+# TARGET: The encode and decode are perfect reverses of each other.
+# 	The decoder convert a string to a verbose template file
+#	The encoder converts the template file to a string
+# USAGE: make -s encode_train.setting
+#        make -s decode_(result of encode)
+decode_%:
+	for param in $(TRAIN_TAG_CMD); do echo $$param; done
+# TARGET: The % is a template file that contains all the parameters in
+# a verbose form. That file is converted to a single string on the
+# basis of the logic in TRAIN_TAG_CMD by actually parsing the
+# TRAIN_TAG_CMD string itself. This is done to avoid duplication of
+# code. 
+encode_%:
+	python src/datamunge/encode_train_template_to_string.py $*
 #################################
 ## WSJ TAG INPUT CREATOR
 # I just to take the most probable one during training, LDC95T7
 # Note that I am also preprocessing things to take care of OOVs while
-# converting to a single file 
+# converting to a single file
+# There are a milion token in the training file, and 36K types.
+# Out of that the vocabtrunc file constrains to only the top 10K types.
 WSJ_PATH := /export/corpora/LDC/LDC99T42/treebank_3/tagged/pos/wsj
 WSJ_POSTAG_CMD = python src/datamunge/convert_wsj_files_to_single_file.py $(WSJ_PATH)
 WSJTAG_CMD = $@ $@.tag.vocab $@.word.vocab
+wsj_data: res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train_sup res/wsj_tag.train_unsup res/wsj_tag.validate
 res/wsj_tag.train.word.vocabtrunc: res/wsj_tag.train.word.vocab
 	head -n 10000 $< > $@ && echo "<OOV> 1" >> $@
-res/wsj_tag.train_sup: res/wsj_tag.train
+res/wsj_tag.train.word.vocab: res/wsj_tag.train
+res/wsj_tag.train_sup: res/wsj_tag.train 
 	cp $< $@
 res/wsj_tag.train_unsup: res/wsj_tag.train
 	sed 's#/[^ ]*##g' $< > $@
-res/wsj_tag.train: 
+res/wsj_tag.train: src/datamunge/convert_wsj_files_to_single_file.py
 	$(WSJ_POSTAG_CMD) 0 18  $(WSJTAG_CMD)
-res/wsj_tag.dev:
+res/wsj_tag.validate: res/wsj_tag.dev
+	head -n 500 $< > $@
+res/wsj_tag.dev: src/datamunge/convert_wsj_files_to_single_file.py
 	$(WSJ_POSTAG_CMD) 19 21 $(WSJTAG_CMD)
 res/wsj_tag.test:
 	$(WSJ_POSTAG_CMD) 22 24 $(WSJTAG_CMD)

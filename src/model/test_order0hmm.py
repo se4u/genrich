@@ -4,7 +4,7 @@
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
 from nose import with_setup
-
+from tag_order0hmm import *
 def setup_func():
     "set up test fixtures"
     pass
@@ -26,3 +26,13 @@ def test():
 # teardown_class, teardownClass, tearDownClass, teardownAll or
 # tearDownAll. Class-level setup and teardown fixtures must be class
 # methods
+def test_get_lp_from_natural_param():
+    idx=2
+    table=[1,2,3]
+    from math import exp, log
+    import numpy as np
+    import nose
+    assert_eq = nose.tools.assert_almost_equal
+    gold_value = log(float(exp(table[idx]))/sum(exp(e) for e in table))
+    calc_value = float(get_lp_from_natural_param(idx, np.array(table)).eval())
+    assert_eq(gold_value, calc_value)
