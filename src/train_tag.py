@@ -1,20 +1,36 @@
-import sys, numpy.linalg, logging, numpy, signal, time
-from util_oneliner import get_vocab_from_file, tictoc, mean
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+import sys, numpy.linalg, logging, numpy, signal, time, random
+from util_oneliner import *
 
+global starting_time
+global sentence_done
+global options
+global mo_model
 starting_time=None
 sentence_done=None
+options=dict(e.split('=') for e in sys.argv[1:])
+random.seed(int(options['RNG_SEED']))
+mo_model=None
+log_filename=options['SAVE_FILE']+".logger"
+ensure_dir(log_filename)
+sys.stderr.write('Logging output to file: %s\n'%log_filename)
+logging.basicConfig(filename=log_filename,level=logging.DEBUG)
+logger=logging
+
 def signal_handler(signal, frame):
     """ Catch Ctrl+C and exit after printing the time taken and the
     sentences processed 
     """
-    sys.stderr.write('\nTime: %0.1f, Sentence: %d\n'%(
+    logger.debug('\nTime: %0.1f, Sentence: %d\n'%(
             time.time()-starting_time, sentence_done))
+    # Save the model at whatever state we are in
+    # that's the beauty of sgd
+    ensure_dir(options['SAVE_FILE'])
+    mo_model.save(options['SAVE_FILE'])
+    logger.debug("Saved model to %s"%options['SAVE_FILE'])
     sys.exit(1)
+    return
 signal.signal(signal.SIGINT, signal_handler)
-options=dict(e.split('=') for e in sys.argv[1:])
-import random
-random.seed(int(options['RNG_SEED']))
+
 
 # fn means filename
 def train_model(mo_model,
@@ -37,33 +53,87 @@ def train_model(mo_model,
                           update the learning rates used. 
     validation_freq = how often we validate
     validation_action =  what we do after validation
+
+    This method can be made a lot more ornate. But for starters I am
+    implementing a simple grid search over a small portion of the
+    training and validation data to automatically set the learning
+    rate and the 
     """
     global sentence_done
+    if batch_size==0 and learning_rate==0:
+        """ Automatically figure out the optimum batch size and
+            learning rate by doing a grid search for them """
+        batch_sizes=[1, 3, 5, 10][::-1]
+        learning_rates=[pow(5,-i) for i in range(6,0,-1)]
+        d={}
+        initial_values=[e.get_value() for e in mo_model.params]
+        for batch_size in batch_sizes:
+            for learning_rate in learning_rates:
+                with tictoc('Tuning with Batch size : %d, Learning rate: %0.2e'%(batch_size, learning_rate)):
+                    for batch_idx, batch in enumerate(batcher(open(sup_train_fn, 'rb'), batch_size)):
+                        if batch_idx*batch_size > 500:
+                            break
+                        
+                        words=[[e.split('/')[0] for e in row]
+                               for row in batch]
+                        tags=[[e.split('/')[1] for e in row]
+                              for row in batch]
+                        
+                        iter_update_gradient=mo_model.batch_update_ao(
+                            learning_rate, tags, words)
+                        logger.debug(' '.join([str(e) for e in [batch_size, learning_rate, batch_idx]]) +
+                                     ' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
+                # Now that we have used up all the batches let's see where we reach on the validation set
+                correct_tags=0.0
+                total_tags=0.0
+                with open(validation_fn, "rb") as vf:
+                    for row in vf:
+                        row=row.strip().split()
+                        words=[e.split("/")[0] for e in row]
+                        true_tags=[e.split("/")[1] for e in row]
+                        [predicted_tags, predicted_scores]= \
+                            mo_model.predict_posterior_tag_sequence(words)
+                        assert(len(predicted_tags)==len(true_tags))
+                        correct_tags+=sum(1 if a==b else 0 for a,b in
+                                         zip(true_tags,predicted_tags))
+                        total_tags+=len(true_tags)
+                d[batch_size,learning_rate]=float(correct_tags)/total_tags
+                logging.debug('The validation done so far %s'%str(d))
+                # Now reset to initial values to do a fair comparison between different settings
+                # Don't borrow anything here. I dont want any memory ocrruption at all.
+                for i in xrange(len(initial_values)):
+                    mo_model.params[i].set_value(initial_values[i])
+        # print d
+        logger.debug('The validation error of different batches and learning rates was the following: '+str(d))
+        ((batch_size, learning_rate),ve)=max(d.items(), key=lambda x: x[1])[0]
+        logger.debug('The optimal batch_size: %d, learning_rate: %f, validation error: %f'%(
+                batch_size, learning_rate, ve))
     for sentence_done, row in enumerate(open(sup_train_fn, 'rb')):
+        sys.stderr.write('.')
         row=row.strip().split()
         if len(row)==0:
             continue
         words=[e.split('/')[0] for e in row]
         tags=[e.split('/')[1] for e in row]
         with tictoc('Training update time'):
-            delta=mo_model.update_ao(eta=learning_rate, tags=tags, words=words)
-        logging.debug(' '.join([str(numpy.linalg.norm(e)) for e in delta]))
+            iter_update_gradient=mo_model.update_ao(eta=learning_rate, tags=tags, words=words)
         
         if sentence_done%validation_freq==0:
+            logger.debug(' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
             with tictoc('Prediction time'):
                 prediction=mo_model.predict_posterior_tag_sequence(words)
                 predicted_tags=prediction[0]
                 predicted_scores=prediction[1]
-                logging.debug("Mean Accuracy %f",
+                logger.debug("Mean Accuracy %f",
                               mean(map(lambda x,y: 1 if x==y else 0,
                                    predicted_tags, tags)))
-                logging.debug('\n'.join(['/'.join([a,b,c,str(d)])
+                logger.debug('\n'.join(['/'.join([a,b,c,str(d)])
                                  for a,b,c,d
                                  in zip(words, tags,
                                         predicted_tags,predicted_scores)]))
         
-        if any(numpy.isnan(e).any() for e in delta):
-            raise Exception('delta became nan!')
+        if any(numpy.isnan(e).any() for e in iter_update_gradient):
+            raise Exception('iter_update_gradient became nan!')
     return mo_model
 
 if __name__=='__main__':
@@ -105,5 +175,6 @@ if __name__=='__main__':
                     validation_action=options['VALIDATION_ACTION'])
     
     with tictoc('Saving model'):
+        ensure_dir(options['SAVE_FILE'])
         mo_model.save(options['SAVE_FILE'])
 

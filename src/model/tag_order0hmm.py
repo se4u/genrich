@@ -6,6 +6,7 @@ data.
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
 import math, theano, logging, sys, os #, itertools
+import util_oneliner
 from tag_baseclass import tag_baseclass
 import numpy as np
 import theano.tensor as T
@@ -34,6 +35,8 @@ def get_lp_from_natural_param(idx, table):
 def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id,
                                        tg_lp_tag_np_table,
                                        tg_tag_emb, tg_word_emb):
+    """ STATUS: Tested
+    """
     tg_tag_word_dot=T.dot(tg_word_emb, tg_tag_emb[tg_tag_id, :])
     # Log probability of word given tag
     tg_lp_word_given_tag=get_lp_from_natural_param(tg_word_id, tg_tag_word_dot)
@@ -55,9 +58,12 @@ def order0_ll_score_given_word_only(tg_word_id,
                                   name="order0_ll_score_map")[0])
 
 def get_random_emb(vocab_size, embedding_size):
-        emb_arr=np.random.randn(vocab_size,
-                                embedding_size)/pow(vocab_size, 0.5)
-        return emb_arr
+    """ The fact that is has a variance equal to inverse of fan-in and
+    that it is a mean zero guassian at the beginning is very important 
+    """
+    emb_arr=np.random.randn(vocab_size,
+                            embedding_size)/pow(vocab_size, 0.5)
+    return emb_arr
 
 def get_cpd_type(cpd_type):
     if cpd_type.startswith("lbl"):
@@ -135,7 +141,7 @@ class tag_order0hmm(tag_baseclass):
             self.param_reg_type=data["param_reg_type"]
             self.unsup_ll_weight=data["unsup_ll_weight"]
             self.param_reg_weight=data["param_reg_weight"]
-            self.tag_np_arr=data["tag_np_arr"]
+            self.tag_np_arr=np.loads(data["tag_np_arr"])
         else:
             self.tag_vocab=tag_vocab
             self.word_vocab=word_vocab
@@ -182,47 +188,54 @@ class tag_order0hmm(tag_baseclass):
                                          dtype=np.float)
         tag_ids=T.ivector("tag_ids")
         word_ids=T.ivector("word_ids")
-        if self.objective_type=="LL" and self.cpd_type=="lbl":
-            # self.tg_score_sto=self.score_sto_ll_tg(tag_ids, word_ids)+\
-            #     self.get_penalty_for_lbl(test_time)
-            tg_score_ao=self._score_ao_tg(tag_ids, word_ids)+\
-                self.get_penalty_for_lbl(test_time)
-            if test_time:
-                tg_score_so=self._score_so_tg(word_ids)
-            else:
-                tg_score_so=self._score_so_tg(word_ids)*self.unsup_ll_weight + \
+        if self.cpd_type=="lbl":
+            if self.objective_type=="LL":
+                tg_score_ao=self._score_ao_tg(tag_ids, word_ids)+\
                     self.get_penalty_for_lbl(test_time)
-            
-            self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
-            self.tg_gradient_so=T.grad(tg_score_so,self.params)
-            
-            self._score_ao=function([tag_ids, word_ids], tg_score_ao,
-                                    name="_score_ao")
-            self._score_so=function([word_ids], tg_score_so,
-                                    name="_score_so")
-            eta=T.fscalar("eta")
-            
-            self._update_ao=function([eta, tag_ids, word_ids],
-                                     self.tg_gradient_ao,
-                                     name="_update_ao",
-                                     updates=[(p, p+eta*g)
-                                              for (g, p)
-                                              in zip(self.tg_gradient_ao,
-                                                     self.params)],
-                                     )
-                                     
-            self._update_so=function([eta, word_ids], self.tg_gradient_so,
-                                     name="_update_so",
-                                     updates=[(p, p+eta*g)
-                                              for (g, p)
-                                              in zip(self.tg_gradient_so,
-                                                     self.params)]
-                                     )
-            
+                if test_time:
+                    tg_score_so=self._score_so_tg(word_ids)
+                else:
+                    tg_score_so=self._score_so_tg(word_ids)*self.unsup_ll_weight + \
+                        self.get_penalty_for_lbl(test_time)
+
+                self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
+                self.tg_gradient_so=T.grad(tg_score_so,self.params)
+
+                self._score_ao=function([tag_ids, word_ids], tg_score_ao,
+                                        name="_score_ao")
+                self._score_so=function([word_ids], tg_score_so,
+                                        name="_score_so")
+                eta=T.fscalar("eta")
+
+                self._gradient_ao=function([tag_ids, word_ids],
+                                           self.tg_gradient_ao,
+                                           name="_gradient_ao")
+                self._gradient_so=function([word_ids],
+                                           self.tg_gradient_so,
+                                           name="_gradient_so")
+
+                self._update_ao=function([eta, tag_ids, word_ids],
+                                         self.tg_gradient_ao,
+                                         name="_update_ao",
+                                         updates=[(p, p+eta*g)
+                                                  for (g, p)
+                                                  in zip(self.tg_gradient_ao,
+                                                         self.params)],
+                                         )
+                self._update_so=function([eta, word_ids], self.tg_gradient_so,
+                                         name="_update_so",
+                                         updates=[(p, p+eta*g)
+                                                  for (g, p)
+                                                  in zip(self.tg_gradient_so,
+                                                         self.params)]
+                                         )
+            elif self.objective_type=="NCE":
+                pass
+            else:
+                raise NotImplementedError(
+                    "objective_type: %s"%self.cpd_type)
         else:
-             raise NotImplementedError(
-                 "objective_type: %s, self.cpd_type: %s"%(
-                     objective_type, self.cpd_type))
+            raise NotImplementedError("self.cpd_type: %s"%self.cpd_type)
         return
 
     def _score_ao_tg(self, tag_ids, word_ids):
@@ -273,7 +286,29 @@ class tag_order0hmm(tag_baseclass):
         """
         return self._update_so(eta,
                                [self.get_from_word_vocab(w) for w in words])
+
+    def batch_update_ao(self, eta, tags_list, words_list):
+        gradient=None
+        for i, (tags, words) in enumerate(zip(tags_list, words_list)):
+            tag_ids=[self.get_from_tag_vocab(t) for t in tags]
+            word_ids=[self.get_from_word_vocab(w) for w in words]
+            grad = self._gradient_ao(tag_ids, word_ids)
+            if i==0:
+                gradient=grad
+            else:
+                ip1 = float(i+1)
+                for j in xrange(len(grad)):
+                    gradient[j]*=(float(i)/ip1)
+                    gradient[j]+=grad[j]*(1.0/ip1)
+        for j, e in enumerate(self.params):
+            e.set_value(
+                e.get_value(borrow=True)+eta*gradient[j],
+                borrow=True)
+        return gradient
     
+    def batch_update_so(self, eta, words_list):
+        raise NotImplementedError
+        pass
     def get_perplexity(self, sentence):
         "Return the actual perplexity of the unsupervised data"
         if self.objective_type == "LL":
@@ -328,7 +363,7 @@ class tag_order0hmm(tag_baseclass):
     def save(self, filename):
         """Save the object's attributes to the yaml filename
         """
-        
+        util_oneliner.ensure_dir(filename)
         f=open(filename, "wb")
         try:
             f.write(dump(dict(

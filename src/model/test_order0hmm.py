@@ -36,3 +36,6 @@ def test_get_lp_from_natural_param():
     gold_value = log(float(exp(table[idx]))/sum(exp(e) for e in table))
     calc_value = float(get_lp_from_natural_param(idx, np.array(table)).eval())
     assert_eq(gold_value, calc_value)
+
+def test_batch_update_ao():
+    pass

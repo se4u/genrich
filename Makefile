@@ -1,6 +1,6 @@
 .PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train
 .SECONDARY:
-PYTEMPLATE = OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=$1,lib.amdlibm=True,mode=$2,gcc.cxxflags=-$3 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True,profile=$4' time python
+PYTEMPLATE = OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=$1,lib.amdlibm=True,mode=$2,gcc.cxxflags=-$3 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True,profile=$4' PYTHONPATH=$$PYTHONPATH:~/projects/genrich/src time python
 PYCMD := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,False)
 PYLIGHT := $(call PYTEMPLATE,fast_compile,FAST_COMPILE,O1,False)
 PYPROFILE := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,True)
@@ -17,28 +17,31 @@ res/%.tagstrip: res/%
 ### EVALUATION
 # TARGET : Printed output of accuracy.
 # SOURCE : 1. The predicted postags 2. The actual postags
-# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev@toy.dev
-# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocab~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev@wsj_tag.dev
-# Evaluate on training done on truncated vocabulary.
-# log/eval_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.dev@wsj_tag.dev
+# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~100~10~0.01~sgd~25000~NOACTION
+DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
+# TARGET: The results of the order 0 model are the following.
+# Accuracy   : 87.393, Weighted Accuracy   : 84.169, Total: 4426
+# IV Accuracy: 88.743, Weighted IV Accuracy: 84.586, Total: 4042
+# OV Accuracy: 73.177, Weighted OV Accuracy: 73.177, Total: 384
+log_eval: log/eval_tag_$(DEFAULT)@wsj_tag.validate
 log/eval_tag_% :
 	$(MAKE) MYDEP1="log/predict_tag_$*.tagstrip" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ eval_tag_generic
 eval_tag_generic: $(MYDEP1) $(MYDEP2)
 	$(PYCMD) \
 	src/eval_tag.py \
 	    $(MYDEP1) \
-	    $(MYDEP2) \
-	    $(TARGET)
+	    $(MYDEP2) > $(TARGET)
 
 ####################################
 ## POSTAGGER PREDICTION 
 # TARGET : The output of the postagger 
 # SOURCE : The trained postagger model,
 #	   The raw words that we want to postag using this model
-# log/predict_tag_order0hmm~lbl10~LL~L1~0.001~0.2~0~NONE~toy.tag.vocab~toy.word.vocab~toy_sup~toy_unsup~toy.dev@toy.dev.tagstrip
+# Remove Stopat if you dont want it to stop
+log_predict: log/predict_tag_$(DEFAULT)@wsj_tag.validate.tagstrip
 PREDICT_OPT_EXTRACTOR = $(word $1,$(subst @, ,$*))
 log/predict_tag_% : 
-	$(MAKE) MYDEP1="res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1)" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ STOPAT=100 predict_tag_generic
+	$(MAKE) MYDEP1="res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1)" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ STOPAT= predict_tag_generic
 
 predict_tag_generic: $(MYDEP1) $(MYDEP2)
 	$(PYCMD) \
@@ -77,7 +80,7 @@ predict_tag_generic: $(MYDEP1) $(MYDEP2)
 # SAVE_FILE           = name of the output pickle of the trained file
 TRAIN_OPT_EXTRACTOR = $(word $1,$(subst ~, ,$*))
 TRAIN_OPT_EXTRACTOR2 = $(word $1,$(subst ~, ,%))
-DEFAULT := order0hmm~lbl100~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~100~10~0.01~sgd~25~NOACTION
+
 # TARGET: By calling any one of these I can either do quick compile or
 # turn on profiling of the code. 
 res_train: res/train_tag_$(DEFAULT)
