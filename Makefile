@@ -17,9 +17,17 @@ res/%.tagstrip: res/%
 ### EVALUATION
 # TARGET : Printed output of accuracy.
 # SOURCE : 1. The predicted postags 2. The actual postags
-# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~100~10~0.01~sgd~25000~NOACTION
-DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
+
+# 
+# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~1~10~0.01~sgd~25000~NOACTION
+
+# This forces tuning of learning rate and batch size
+# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
+
+# This has the best learning rate and batch size. 
+DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
 # TARGET: The results of the order 0 model are the following.
+# This is on validation data with 1/4 of DEV.
 # Accuracy   : 87.393, Weighted Accuracy   : 84.169, Total: 4426
 # IV Accuracy: 88.743, Weighted IV Accuracy: 84.586, Total: 4042
 # OV Accuracy: 73.177, Weighted OV Accuracy: 73.177, Total: 384

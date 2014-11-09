@@ -197,23 +197,23 @@ class tag_order0hmm(tag_baseclass):
                 else:
                     tg_score_so=self._score_so_tg(word_ids)*self.unsup_ll_weight + \
                         self.get_penalty_for_lbl(test_time)
-
+                
                 self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
                 self.tg_gradient_so=T.grad(tg_score_so,self.params)
-
+                
                 self._score_ao=function([tag_ids, word_ids], tg_score_ao,
                                         name="_score_ao")
                 self._score_so=function([word_ids], tg_score_so,
                                         name="_score_so")
                 eta=T.fscalar("eta")
-
+                
                 self._gradient_ao=function([tag_ids, word_ids],
                                            self.tg_gradient_ao,
                                            name="_gradient_ao")
                 self._gradient_so=function([word_ids],
                                            self.tg_gradient_so,
                                            name="_gradient_so")
-
+                
                 self._update_ao=function([eta, tag_ids, word_ids],
                                          self.tg_gradient_ao,
                                          name="_update_ao",

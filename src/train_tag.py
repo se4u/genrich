@@ -1,5 +1,5 @@
 import sys, numpy.linalg, logging, numpy, signal, time, random
-from util_oneliner import *
+from util_oneliner import batcher, ensure_dir, tictoc, mean, get_vocab_from_file
 
 global starting_time
 global sentence_done
@@ -31,6 +31,59 @@ def signal_handler(signal, frame):
     return
 signal.signal(signal.SIGINT, signal_handler)
 
+def tune_batch_size_learning_rate(mo_model,
+                                  sup_train_fn,
+                                  validation_fn,
+                                  batch_sizes=(10, 5, 3, 1),
+                                  learning_rates=tuple(pow(5,-i)
+                                                       for i in range(6,0,-1)),
+                                  quota=500):
+    """ Tune the batch size and learning rate over the range that is supplied.
+    """
+    d={}
+    initial_values=[e.get_value() for e in mo_model.params]
+    for batch_size in batch_sizes:
+        for learning_rate in learning_rates:
+            with tictoc('Tuning with Batch size : %d, Learning rate: %0.2e'%(batch_size, learning_rate)):
+                for batch_idx, batch in enumerate(batcher(open(sup_train_fn, 'rb'), batch_size)):
+                    if batch_idx*batch_size > quota:
+                        break
+
+                    words=[[e.split('/')[0] for e in row]
+                           for row in batch]
+                    tags=[[e.split('/')[1] for e in row]
+                          for row in batch]
+
+                    iter_update_gradient=mo_model.batch_update_ao(
+                        learning_rate, tags, words)
+                    logger.debug(' '.join([str(e) for e in [batch_size, learning_rate, batch_idx]]) +
+                                 ' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
+            # Now that we have used up all the batches let's see where we reach on the validation set
+            correct_tags=0.0
+            total_tags=0.0
+            with open(validation_fn, "rb") as vf:
+                for row in vf:
+                    row=row.strip().split()
+                    words=[e.split("/")[0] for e in row]
+                    true_tags=[e.split("/")[1] for e in row]
+                    [predicted_tags, predicted_scores]= \
+                        mo_model.predict_posterior_tag_sequence(words)
+                    assert(len(predicted_tags)==len(true_tags))
+                    correct_tags+=sum(1 if a==b else 0 for a,b in
+                                     zip(true_tags,predicted_tags))
+                    total_tags+=len(true_tags)
+            d[batch_size,learning_rate]=float(correct_tags)/total_tags
+            logging.debug('The validation done so far %s'%str(d))
+            # Now reset to initial values to do a fair comparison between different settings
+            # Don't borrow anything here. I dont want any memory corruption at all.
+            for i in xrange(len(initial_values)):
+                mo_model.params[i].set_value(initial_values[i])
+    # print d
+    logger.debug('The validation accuracy of different batches and learning rates are the following: '+str(d))
+    ((batch_size, learning_rate),ve)=max(d.items(), key=lambda x: x[1])
+    logger.debug('The optimal batch_size: %d, learning_rate: %f, validation error: %f'%(
+            batch_size, learning_rate, ve))
+    return [batch_size, learning_rate]
 
 # fn means filename
 def train_model(mo_model,
@@ -63,51 +116,8 @@ def train_model(mo_model,
     if batch_size==0 and learning_rate==0:
         """ Automatically figure out the optimum batch size and
             learning rate by doing a grid search for them """
-        batch_sizes=[1, 3, 5, 10][::-1]
-        learning_rates=[pow(5,-i) for i in range(6,0,-1)]
-        d={}
-        initial_values=[e.get_value() for e in mo_model.params]
-        for batch_size in batch_sizes:
-            for learning_rate in learning_rates:
-                with tictoc('Tuning with Batch size : %d, Learning rate: %0.2e'%(batch_size, learning_rate)):
-                    for batch_idx, batch in enumerate(batcher(open(sup_train_fn, 'rb'), batch_size)):
-                        if batch_idx*batch_size > 500:
-                            break
-                        
-                        words=[[e.split('/')[0] for e in row]
-                               for row in batch]
-                        tags=[[e.split('/')[1] for e in row]
-                              for row in batch]
-                        
-                        iter_update_gradient=mo_model.batch_update_ao(
-                            learning_rate, tags, words)
-                        logger.debug(' '.join([str(e) for e in [batch_size, learning_rate, batch_idx]]) +
-                                     ' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
-                # Now that we have used up all the batches let's see where we reach on the validation set
-                correct_tags=0.0
-                total_tags=0.0
-                with open(validation_fn, "rb") as vf:
-                    for row in vf:
-                        row=row.strip().split()
-                        words=[e.split("/")[0] for e in row]
-                        true_tags=[e.split("/")[1] for e in row]
-                        [predicted_tags, predicted_scores]= \
-                            mo_model.predict_posterior_tag_sequence(words)
-                        assert(len(predicted_tags)==len(true_tags))
-                        correct_tags+=sum(1 if a==b else 0 for a,b in
-                                         zip(true_tags,predicted_tags))
-                        total_tags+=len(true_tags)
-                d[batch_size,learning_rate]=float(correct_tags)/total_tags
-                logging.debug('The validation done so far %s'%str(d))
-                # Now reset to initial values to do a fair comparison between different settings
-                # Don't borrow anything here. I dont want any memory ocrruption at all.
-                for i in xrange(len(initial_values)):
-                    mo_model.params[i].set_value(initial_values[i])
-        # print d
-        logger.debug('The validation error of different batches and learning rates was the following: '+str(d))
-        ((batch_size, learning_rate),ve)=max(d.items(), key=lambda x: x[1])[0]
-        logger.debug('The optimal batch_size: %d, learning_rate: %f, validation error: %f'%(
-                batch_size, learning_rate, ve))
+        [batch_size, learning_rate]=tune_batch_size_learning_rate(
+            mo_model,sup_train_fn,validation_fn)
     for sentence_done, row in enumerate(open(sup_train_fn, 'rb')):
         sys.stderr.write('.')
         row=row.strip().split()
