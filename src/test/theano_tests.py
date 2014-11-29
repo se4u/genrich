@@ -73,3 +73,11 @@ print f_grad(-1)
 "Does it make sense to take dot between a row and a matrix ?"
 
 
+from theano import function
+a=T.shared(np.random.randn(3,3,3))
+b=T.shared(np.random.randn(3,3,3))
+f=T.abs_
+reduce(lambda x,y: x+f(y).sum(), [a,b], 0)
+aa=T.grad(reduce(lambda x,y: x+f(y).sum(), [a,b], 0), [a,b])
+function([], aa)()
+# This should equal [-1, 1, 1, -1 etc.]

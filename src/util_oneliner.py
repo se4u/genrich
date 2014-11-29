@@ -2,6 +2,9 @@ from math import log, exp
 import numpy as np
 import time, os, logging
 from contextlib import contextmanager
+import theano.tensor as T
+from util_theano_extension import log_softmax
+
 def strlist_to_int(l):
     return [int(e) for e in l]
 
@@ -66,3 +69,16 @@ def batcher(itr, batch_size):
             yield l
             l=[]
     yield l
+
+def get_lp_from_natural_param(idx, table):
+    """ STATUS: Tested
+    """
+    return T.sum(log_softmax(idx, table.flatten()))    
+
+def get_random_emb(vocab_size, embedding_size):
+    """ The fact that is has a variance equal to inverse of fan-in and
+    that it is a mean zero guassian at the beginning is very important 
+    """
+    emb_arr=np.random.randn(vocab_size,
+                            embedding_size)/pow(vocab_size, 0.5)
+    return emb_arr

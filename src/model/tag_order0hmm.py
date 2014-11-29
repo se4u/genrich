@@ -8,6 +8,7 @@ __contact__ = "pushpendre@jhu.edu"
 import math, theano, logging, sys, os #, itertools
 import util_oneliner
 from tag_baseclass import tag_baseclass
+from util_theano_extension import log_sum_exp
 import numpy as np
 import theano.tensor as T
 from theano import shared, function
@@ -19,18 +20,6 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 # App Hungarian
 #   tg_ means theano graph object
 #   tf_ means theano function object
-def log_sum_exp(x):
-    m=T.max(x, axis=0)
-    return T.log(T.sum(T.exp(x - m))) + m
-
-def log_softmax(idx, table):
-    denominator=log_sum_exp(table)
-    return table[idx] - denominator
-
-def get_lp_from_natural_param(idx, table):
-    """ STATUS: Tested
-    """
-    return T.sum(log_softmax(idx, table.flatten()))    
 
 def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id,
                                        tg_lp_tag_np_table,
@@ -39,9 +28,9 @@ def order0_ll_score_given_word_and_tag(tg_tag_id, tg_word_id,
     """
     tg_tag_word_dot=T.dot(tg_word_emb, tg_tag_emb[tg_tag_id, :])
     # Log probability of word given tag
-    tg_lp_word_given_tag=get_lp_from_natural_param(tg_word_id, tg_tag_word_dot)
+    tg_lp_word_given_tag=util_oneliner.get_lp_from_natural_param(tg_word_id, tg_tag_word_dot)
     # Log probability of tag
-    tg_lp_tag=get_lp_from_natural_param(tg_tag_id, tg_lp_tag_np_table)
+    tg_lp_tag=util_oneliner.get_lp_from_natural_param(tg_tag_id, tg_lp_tag_np_table)
     # Return the sum
     return tg_lp_tag + tg_lp_word_given_tag
 
@@ -82,25 +71,7 @@ class tag_order0hmm(tag_baseclass):
     # from a file along with embeddings.
     >>> self = tag_order0hmm("lbl10", "LL", "L1", 0.01, 0.5, False, None, dict(t0=0, t1=1, t2=2), dict(w0=0, w1=1, w2=2))
     >>> self = tag_order0hmm(None, None, None, None, None, True, r"res/order0hmm_param.yaml", None, None)
-    """
-    def get_penalty_for_lbl(self, test_time):
-        if test_time==False:
-            if self.param_reg_type=="L1": 
-                penalty = -(self.param_reg_weight *
-                            (T.sum(T.abs_(self._tg_tag_emb)) +
-                             T.sum(T.abs_(self._tg_word_emb))))
-            elif self.param_reg_type=="L2":
-                penalty = -(self.param_reg_weight *
-                            (T.sum(T.sqr(self._tg_tag_emb)) +
-                             T.sum(T.sqr(self._tg_word_emb))))
-            else:
-                raise NotImplementedError(
-                    "objective_type: %s, param_reg_type: %s, self.cpd_type: %s"%(
-                        self.objective_type, self.param_reg_type, self.cpd_type))
-        else:
-            penalty = 0
-        return penalty
-    
+    """    
     def __init__(self,
                  cpd_type,
                  objective_type,
@@ -191,12 +162,12 @@ class tag_order0hmm(tag_baseclass):
         if self.cpd_type=="lbl":
             if self.objective_type=="LL":
                 tg_score_ao=self._score_ao_tg(tag_ids, word_ids)+\
-                    self.get_penalty_for_lbl(test_time)
+                    self.get_tg_penalty(test_time)
                 if test_time:
                     tg_score_so=self._score_so_tg(word_ids)
                 else:
                     tg_score_so=self._score_so_tg(word_ids)*self.unsup_ll_weight + \
-                        self.get_penalty_for_lbl(test_time)
+                        self.get_tg_penalty(test_time)
                 
                 self.tg_gradient_ao=T.grad(tg_score_ao,self.params)
                 self.tg_gradient_so=T.grad(tg_score_so,self.params)
@@ -238,6 +209,21 @@ class tag_order0hmm(tag_baseclass):
             raise NotImplementedError("self.cpd_type: %s"%self.cpd_type)
         return
 
+    def get_tg_penalty(self, test_time):
+        if test_time==False:
+            if self.param_reg_type=="L1":
+                f=T.abs_
+            elif self.param_reg_type=="L2":
+                f=T.sqr
+            else:
+                raise NotImplementedError(
+                    "param_reg_type: %s"%(self.param_reg_type))
+            tg_penalty = -self.param_reg_weight*\
+                reduce(lambda x,y: x+f(y).sum(), self.params, 0)
+        else:
+            tg_penalty = 0
+        return tg_penalty
+    
     def _score_ao_tg(self, tag_ids, word_ids):
         output, _ = theano.map(fn=order0_ll_score_given_word_and_tag, 
                                sequences=[tag_ids, word_ids], 
@@ -359,6 +345,24 @@ class tag_order0hmm(tag_baseclass):
             break
         return
     
+    def get_dict_for_save(self):
+        return dict(
+            tag_vocab=self.tag_vocab,
+            word_vocab=self.word_vocab,
+            cpd_type=self.cpd_type,
+            _embedding_size=self._embedding_size,
+            tag_np_arr=self.tag_np_arr.dumps(),
+            tag_emb_arr=self.tag_emb_arr.dumps(),
+            word_emb_arr=self.word_emb_arr.dumps(),
+            _lambda=self._lambda,
+            objective_type=self.objective_type,
+            param_reg_type=self.param_reg_type,
+            unsup_ll_weight= \
+                self.unsup_ll_weight.get_scalar_constant_value(),
+            param_reg_weight= \
+                self.param_reg_weight.get_scalar_constant_value()
+            )
+    
     # Following functions are utility functions
     def save(self, filename):
         """Save the object's attributes to the yaml filename
@@ -366,22 +370,7 @@ class tag_order0hmm(tag_baseclass):
         util_oneliner.ensure_dir(filename)
         f=open(filename, "wb")
         try:
-            f.write(dump(dict(
-                        tag_vocab=self.tag_vocab,
-                        word_vocab=self.word_vocab,
-                        cpd_type=self.cpd_type,
-                        _embedding_size=self._embedding_size,
-                        tag_np_arr=self.tag_np_arr.dumps(),
-                        tag_emb_arr=self.tag_emb_arr.dumps(),
-                        word_emb_arr=self.word_emb_arr.dumps(),
-                        _lambda=self._lambda,
-                        objective_type=self.objective_type,
-                        param_reg_type=self.param_reg_type,
-                        unsup_ll_weight= \
-                            self.unsup_ll_weight.get_scalar_constant_value(),
-                        param_reg_weight= \
-                            self.param_reg_weight.get_scalar_constant_value()
-                        ),
+            f.write(dump(self.get_dict_for_save(),
                          Dumper=Dumper,
                          default_flow_style=False))
         except Exception as exc:
@@ -399,9 +388,6 @@ class tag_order0hmm(tag_baseclass):
             return self.word_vocab["<OOV>"]
         
     def get_from_tag_vocab(self, tag):
-        try:
-            return self.tag_vocab[tag]
-        except:
-            return self.tag_vocab["<OOV>"]
+        return self.tag_vocab[tag]
         
     

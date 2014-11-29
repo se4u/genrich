@@ -10,35 +10,30 @@ test_all: # --failed --with-profile
 collect_test_all:
 	$(NOSETEST_CMD) --collect-only -w src/test
 # TARGET: tag stripped version of any input file in res folder
-
 res/%.tagstrip: res/%
 	sed 's#/[^ ]*##g' $< > $@
 #####################################
 ### EVALUATION
-# TARGET : Printed output of accuracy.
-# SOURCE : 1. The predicted postags 2. The actual postags
-
-# 
-# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.validate~1234~1~10~0.01~sgd~25000~NOACTION
-
-# This forces tuning of learning rate and batch size
-# DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
-
-# This has the best learning rate and batch size. 
-DEFAULT := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
-# TARGET: The results of the order 0 model are the following.
+# This forces tuning of learning rate and batch size since the learning rate and the batch size are both 0. That triggers the batch size and learning rate tuning algorithm.
+D_TUNE_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
+# The results of the order 0 model are the following.
 # This is on validation data with 1/4 of DEV.
 # Accuracy   : 87.393, Weighted Accuracy   : 84.169, Total: 4426
 # IV Accuracy: 88.743, Weighted IV Accuracy: 84.586, Total: 4042
 # OV Accuracy: 73.177, Weighted OV Accuracy: 73.177, Total: 384
-log_eval: log/eval_tag_$(DEFAULT)@wsj_tag.validate
+# This has the best learning rate and batch size. for the order0hmm. This rate was found after using D_TUNE_LEARNING_RATE
+D_BEST_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
+D_TUNE_LEARNING_HNMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
+DEFAULT := $(D_TUNE_LEARNING_HNMM)
+log_eval: log/eval_tag_$(DEFAULT)@wsj_tag.from_500.validate
 log/eval_tag_% :
 	$(MAKE) MYDEP1="log/predict_tag_$*.tagstrip" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ eval_tag_generic
 eval_tag_generic: $(MYDEP1) $(MYDEP2)
 	$(PYCMD) \
-	src/eval_tag.py \
+	  src/eval_tag.py \
 	    $(MYDEP1) \
-	    $(MYDEP2) > $(TARGET)
+	    $(MYDEP2) > $(TARGET) ; \
+	tail -n 4 $(TARGET)
 
 ####################################
 ## POSTAGGER PREDICTION 
@@ -56,8 +51,7 @@ predict_tag_generic: $(MYDEP1) $(MYDEP2)
 	src/predict_tag.py \
 	    $(MYDEP1) \
 	    $(MYDEP2) \
-	    $(TARGET) \
-	    $(STOPAT)
+	    $(TARGET) $(STOPAT)
 # # Train_train > Predict_train > Evaluate_train > Tune.parameters + Profile/debug.code (Loop)  > Train_train
 ####################################################################
 # TAGGER TRAINING
@@ -88,13 +82,6 @@ predict_tag_generic: $(MYDEP1) $(MYDEP2)
 # SAVE_FILE           = name of the output pickle of the trained file
 TRAIN_OPT_EXTRACTOR = $(word $1,$(subst ~, ,$*))
 TRAIN_OPT_EXTRACTOR2 = $(word $1,$(subst ~, ,%))
-
-# TARGET: By calling any one of these I can either do quick compile or
-# turn on profiling of the code. 
-res_train: res/train_tag_$(DEFAULT)
-quick_train: quick/train_tag_$(DEFAULT)
-profile_train: profile/train_tag_$(DEFAULT)
-# 
 TRAIN_TAG_CMD = MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
 	        CPD_TYPE=$(call TRAIN_OPT_EXTRACTOR,2) \
 	        OBJECTIVE_TYPE=$(call TRAIN_OPT_EXTRACTOR,3) \
@@ -115,9 +102,16 @@ TRAIN_TAG_CMD = MODEL_TYPE=$(call TRAIN_OPT_EXTRACTOR,1) \
 		OPTIMIZATION_METHOD=$(call TRAIN_OPT_EXTRACTOR,18) \
 		VALIDATION_FREQ=$(call TRAIN_OPT_EXTRACTOR,19) \
 		VALIDATION_ACTION=$(call TRAIN_OPT_EXTRACTOR,20)
+
 TRAIN_CMD = src/train_tag.py \
 		$(TRAIN_TAG_CMD) \
 	        SAVE_FILE=$@
+## TRAINING SHORTCUTS
+# TARGET: By calling any one of these I can either do quick compile or
+# turn on profiling of the code. 
+res_train: res/train_tag_$(DEFAULT)
+quick_train: quick/train_tag_$(DEFAULT)
+profile_train: profile/train_tag_$(DEFAULT)
 # SOURCE: res/wsj_tag.train.word.vocabtrunc res/wsj_tag.train.word.vocab
 res/train_tag_% : 
 	$(PYCMD) \
@@ -128,6 +122,7 @@ quick/train_tag_% :
 profile/train_tag_% : 
 	$(PYPROFILE) \
 		$(TRAIN_CMD)
+## DECODE PARAMETER STRING
 # TARGET: The encode and decode are perfect reverses of each other.
 # 	The decoder convert a string to a verbose template file
 #	The encoder converts the template file to a string
@@ -135,6 +130,7 @@ profile/train_tag_% :
 #        make -s decode_(result of encode)
 decode_%:
 	for param in $(TRAIN_TAG_CMD); do echo $$param; done
+## ENCODE PARAMETER STRING
 # TARGET: The % is a template file that contains all the parameters in
 # a verbose form. That file is converted to a single string on the
 # basis of the logic in TRAIN_TAG_CMD by actually parsing the
@@ -162,13 +158,26 @@ res/wsj_tag.train_unsup: res/wsj_tag.train
 	sed 's#/[^ ]*##g' $< > $@
 res/wsj_tag.train: src/datamunge/convert_wsj_files_to_single_file.py
 	$(WSJ_POSTAG_CMD) 0 18  $(WSJTAG_CMD)
+res/wsj_tag.from_%.validate: res/wsj_tag.dev
+	awk '{if(NR>$* && NR < 500+$*){print $$0}}' $< > $@
 res/wsj_tag.validate: res/wsj_tag.dev
 	head -n 500 $< > $@
 res/wsj_tag.dev: src/datamunge/convert_wsj_files_to_single_file.py
 	$(WSJ_POSTAG_CMD) 19 21 $(WSJTAG_CMD)
 res/wsj_tag.test:
 	$(WSJ_POSTAG_CMD) 22 24 $(WSJTAG_CMD)
-
+# wc res/suffix_count_3  res/suffix_count_2 res/suffix_count_4 res/prefix_count_3  res/prefix_count_2 res/prefix_count_4  
+#   1422   2844  17064 res/suffix_count_3
+#    333    666   3663 res/suffix_count_2
+#   3199   6398  41587 res/suffix_count_4
+#   1682   3364  20184 res/prefix_count_3
+#    312    624   3432 res/prefix_count_2
+#   3593   7186  46709 res/prefix_count_4
+#  10541  21082 132639 total
+res/prefix_count_%: res/wsj_tag.train.tagstrip
+	awk '{for(i=1; i<=NF; i++){if(length($$i) > $*){print substr($$i, 0, $*)}}}' $< | egrep  '^[a-zA-Z]*$$' | sort | uniq -c | sort -nr | awk '{if($$1 > 5){print $$0}}' > $@
+res/suffix_count_%: res/wsj_tag.train.tagstrip
+	awk '{for(i=1; i<=NF; i++){if(length($$i) > $*){print substr($$i, length($$i)-$*+1)}}}' $< | egrep  '^[a-zA-Z]*$$' | sort | uniq -c | sort -nr | awk '{if($$1 > 5){print $$0}}'  > $@
 #####################################
 ## BASELINE (CRFSuite)
 # Jason said that how are you sure that the feature set they are using

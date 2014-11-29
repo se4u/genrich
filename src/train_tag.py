@@ -1,4 +1,4 @@
-import sys, numpy.linalg, logging, numpy, signal, time, random
+import sys, numpy.linalg, logging, numpy, signal, time, random, re
 from util_oneliner import batcher, ensure_dir, tictoc, mean, get_vocab_from_file
 
 global starting_time
@@ -148,30 +148,38 @@ def train_model(mo_model,
 
 if __name__=='__main__':
     model_type = options['MODEL_TYPE']
-    if model_type=='order0hmm':
-        from model.tag_order0hmm import tag_order0hmm
-        cl_model = tag_order0hmm
-    elif model_type=='rhmm':
-        raise NotImplementedError
-        from model.tag_rhmm import tag_rhmm
-        cl_model = tag_rhmm
-    else:
-        raise NotImplementedError
+    tag_vocab=get_vocab_from_file(open(options['TAG_VOCAB_FILE'],'rb'))
+    word_vocab=get_vocab_from_file(open(options['WORD_VOCAB_FILE'],'rb'))
     with tictoc('Init mo_model'):
-        mo_model=cl_model(cpd_type=options['CPD_TYPE'],
-                      objective_type=options['OBJECTIVE_TYPE'],
-                      param_reg_type=options['PARAM_REG_TYPE'],
-                      param_reg_weight=float(options['PARAM_REG_WEIGHT']),
-                      unsup_ll_weight=float(options['UNSUP_LL_WEIGHT']),
-                      init_from_file=int(options['INIT_FROM_FILE']),
-                      param_filename=options['PARAM_FILENAME'],
-                      tag_vocab=\
-                          get_vocab_from_file(open(options['TAG_VOCAB_FILE'],
-                                                   'rb')),
-                      word_vocab=\
-                          get_vocab_from_file(open(options['WORD_VOCAB_FILE'],
-                                                   'rb')),
-                      test_time=False)
+        if model_type=='order0hmm':
+            from model.tag_order0hmm import tag_order0hmm
+            mo_model=tag_order0hmm(cpd_type=options['CPD_TYPE'],
+                                   objective_type=options['OBJECTIVE_TYPE'],
+                                   param_reg_type=options['PARAM_REG_TYPE'],
+                                   param_reg_weight=float(options['PARAM_REG_WEIGHT']),
+                                   unsup_ll_weight=float(options['UNSUP_LL_WEIGHT']),
+                                   init_from_file=int(options['INIT_FROM_FILE']),
+                                   param_filename=options['PARAM_FILENAME'],
+                                   tag_vocab=tag_vocab,
+                                   word_vocab=word_vocab,
+                                   test_time=False)
+        elif re.match('order([0-9]+)rhmm',model_type):
+            from model.tag_rhmm import tag_rhmm
+            get_param=lambda r,s: int(re.match(r, s).group(1))
+            mo_model = tag_rhmm(word_context_size=\
+                                    get_param('order([0-9]+)rhmm',model_type),
+                                embedding_size=\
+                                    get_param('lbl([0-9]+)', options['CPD_TYPE']),
+                                objective_type=options['OBJECTIVE_TYPE'],
+                                param_reg_type=options['PARAM_REG_TYPE'],
+                                param_reg_weight=float(options['PARAM_REG_WEIGHT']),
+                                init_from_file=int(options['INIT_FROM_FILE']),
+                                param_filename=options['PARAM_FILENAME'],
+                                tag_vocab=tag_vocab,
+                                word_vocab=word_vocab,
+                                test_time=False)
+        else:
+            raise NotImplementedError("Unknown model_type: %s"%model_type)
     with tictoc('Training mo_model'):
         train_model(mo_model=mo_model,
                     sup_train_fn=options['SUP_TRAIN_FILE'],
@@ -183,7 +191,6 @@ if __name__=='__main__':
                     optimization_method=options['OPTIMIZATION_METHOD'],
                     validation_freq=int(options['VALIDATION_FREQ']),
                     validation_action=options['VALIDATION_ACTION'])
-    
     with tictoc('Saving model'):
         ensure_dir(options['SAVE_FILE'])
         mo_model.save(options['SAVE_FILE'])
