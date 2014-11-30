@@ -1,4 +1,4 @@
-import sys, numpy.linalg, logging, numpy, signal, time, random, re
+import sys, numpy.linalg, logging, numpy, signal, time, random, re, yaml
 from util_oneliner import batcher, ensure_dir, tictoc, mean, get_vocab_from_file
 
 global starting_time
@@ -44,21 +44,26 @@ def tune_batch_size_learning_rate(mo_model,
     initial_values=[e.get_value() for e in mo_model.params]
     for batch_size in batch_sizes:
         for learning_rate in learning_rates:
-            with tictoc('Tuning with Batch size : %d, Learning rate: %0.2e'%(batch_size, learning_rate)):
-                for batch_idx, batch in enumerate(batcher(open(sup_train_fn, 'rb'), batch_size)):
+            with tictoc('Tuning with Batch size : %d, Learning rate: %0.2e'%(
+                    batch_size, learning_rate)):
+                for batch_idx, batch \
+                        in enumerate(batcher(open(sup_train_fn, 'rb'), batch_size)):
                     if batch_idx*batch_size > quota:
                         break
-
                     words=[[e.split('/')[0] for e in row]
                            for row in batch]
                     tags=[[e.split('/')[1] for e in row]
                           for row in batch]
 
-                    iter_update_gradient=mo_model.batch_update_ao(
-                        learning_rate, tags, words)
-                    logger.debug(' '.join([str(e) for e in [batch_size, learning_rate, batch_idx]]) +
-                                 ' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
-            # Now that we have used up all the batches let's see where we reach on the validation set
+                    iter_update_gradient=\
+                        mo_model.batch_update_ao(learning_rate, tags, words)
+                    debug_str=' '.join([str(e) for e
+                                        in [batch_size, learning_rate, batch_idx]])
+                    debug_str+=' '.join([str(numpy.linalg.norm(e))
+                                         for e in iter_update_gradient])
+                    logger.debug(debug_str)
+            # Now that we have used up all the batches let's see
+            # where we reach on the validation set
             correct_tags=0.0
             total_tags=0.0
             with open(validation_fn, "rb") as vf:
@@ -74,14 +79,14 @@ def tune_batch_size_learning_rate(mo_model,
                     total_tags+=len(true_tags)
             d[batch_size,learning_rate]=float(correct_tags)/total_tags
             logging.debug('The validation done so far %s'%str(d))
-            # Now reset to initial values to do a fair comparison between different settings
-            # Don't borrow anything here. I dont want any memory corruption at all.
+            # Now reset to initial values for fair comparison between settings
+            # Don't borrow anything here. I dont want any memory corruption.
             for i in xrange(len(initial_values)):
                 mo_model.params[i].set_value(initial_values[i])
-    # print d
+    # print d        
     logger.debug('The validation accuracy of different batches and learning rates are the following: '+str(d))
     ((batch_size, learning_rate),ve)=max(d.items(), key=lambda x: x[1])
-    logger.debug('The optimal batch_size: %d, learning_rate: %f, validation error: %f'%(
+    logger.debug('Best batch_size: %d, learning_rate: %f, Validation acc: %f'%(
             batch_size, learning_rate, ve))
     return [batch_size, learning_rate]
 
@@ -118,6 +123,8 @@ def train_model(mo_model,
             learning rate by doing a grid search for them """
         [batch_size, learning_rate]=tune_batch_size_learning_rate(
             mo_model,sup_train_fn,validation_fn)
+    get_gradient_norm_str=lambda iter_update_gradient:\
+        ' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient])
     for sentence_done, row in enumerate(open(sup_train_fn, 'rb')):
         sys.stderr.write('.')
         row=row.strip().split()
@@ -125,11 +132,16 @@ def train_model(mo_model,
             continue
         words=[e.split('/')[0] for e in row]
         tags=[e.split('/')[1] for e in row]
+        if len(words) <= 2:
+            continue
         with tictoc('Training update time'):
-            iter_update_gradient=mo_model.update_ao(eta=learning_rate, tags=tags, words=words)
-        
-        if sentence_done%validation_freq==0:
-            logger.debug(' '.join([str(numpy.linalg.norm(e)) for e in iter_update_gradient]))
+            try:
+                iter_update_gradient=mo_model.update_ao(eta=learning_rate, tags=tags, words=words)
+                logger.debug(get_gradient_norm_str(iter_update_gradient))
+            except NotImplementedError as __err:
+                logger.error("Eta: %f, Row: %s Caused Error: %s",
+                             learning_rate, row, str(__err))
+        if (sentence_done+1)%validation_freq==0:
             with tictoc('Prediction time'):
                 prediction=mo_model.predict_posterior_tag_sequence(words)
                 predicted_tags=prediction[0]
@@ -143,13 +155,23 @@ def train_model(mo_model,
                                         predicted_tags,predicted_scores)]))
         
         if any(numpy.isnan(e).any() for e in iter_update_gradient):
-            raise Exception('iter_update_gradient became nan!')
+            logger.critical(get_gradient_norm_str(iter_update_gradient))
+            raise ValueError('iter_update_gradient became nan!')
     return mo_model
-
+            
 if __name__=='__main__':
     model_type = options['MODEL_TYPE']
     tag_vocab=get_vocab_from_file(open(options['TAG_VOCAB_FILE'],'rb'))
     word_vocab=get_vocab_from_file(open(options['WORD_VOCAB_FILE'],'rb'))
+    test_time=False
+    if int(options['INIT_FROM_FILE']) == 0:
+        init_data=None
+    else:
+        if options['PARAM_FILENAME'].split(r"/")[-1] == r"NONE":
+            init_data=yaml.load(open(options['SAVE_FILE'], "rb"))
+        else:
+            init_data=yaml.load(open(options['PARAM_FILENAME'], "rb"))
+            
     with tictoc('Init mo_model'):
         if model_type=='order0hmm':
             from model.tag_order0hmm import tag_order0hmm
@@ -158,11 +180,10 @@ if __name__=='__main__':
                                    param_reg_type=options['PARAM_REG_TYPE'],
                                    param_reg_weight=float(options['PARAM_REG_WEIGHT']),
                                    unsup_ll_weight=float(options['UNSUP_LL_WEIGHT']),
-                                   init_from_file=int(options['INIT_FROM_FILE']),
-                                   param_filename=options['PARAM_FILENAME'],
                                    tag_vocab=tag_vocab,
                                    word_vocab=word_vocab,
-                                   test_time=False)
+                                   test_time=test_time,
+                                   init_data=init_data)
         elif re.match('order([0-9]+)rhmm',model_type):
             from model.tag_rhmm import tag_rhmm
             get_param=lambda r,s: int(re.match(r, s).group(1))
@@ -173,15 +194,15 @@ if __name__=='__main__':
                                 objective_type=options['OBJECTIVE_TYPE'],
                                 param_reg_type=options['PARAM_REG_TYPE'],
                                 param_reg_weight=float(options['PARAM_REG_WEIGHT']),
-                                init_from_file=int(options['INIT_FROM_FILE']),
-                                param_filename=options['PARAM_FILENAME'],
                                 tag_vocab=tag_vocab,
                                 word_vocab=word_vocab,
-                                test_time=False)
+                                test_time=test_time,
+                                init_data=init_data)
         else:
             raise NotImplementedError("Unknown model_type: %s"%model_type)
     with tictoc('Training mo_model'):
-        train_model(mo_model=mo_model,
+        try:
+            train_model(mo_model=mo_model,
                     sup_train_fn=options['SUP_TRAIN_FILE'],
                     unsup_train_fn=options['UNSUP_TRAIN_FILE'],
                     validation_fn=options['VALIDATION_FILE'],
@@ -191,6 +212,10 @@ if __name__=='__main__':
                     optimization_method=options['OPTIMIZATION_METHOD'],
                     validation_freq=int(options['VALIDATION_FREQ']),
                     validation_action=options['VALIDATION_ACTION'])
+        except Exception as __ex:
+            logger.critical(str(__ex))
+            logger.critical("""Caught some unknown exception. Would
+try to save the model and exit asap""")
     with tictoc('Saving model'):
         ensure_dir(options['SAVE_FILE'])
         mo_model.save(options['SAVE_FILE'])

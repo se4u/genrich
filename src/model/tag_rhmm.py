@@ -11,9 +11,8 @@ from tag_order0hmm import tag_order0hmm
 import numpy as np
 import theano.tensor as T
 from theano import function, scan, shared
-import yaml
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
+logger=logging
 # emb means embedding
 # App Hungarian
 #   tg_ means theano graph object
@@ -88,35 +87,33 @@ class tag_rhmm(tag_order0hmm):
                  objective_type,
                  param_reg_type,
                  param_reg_weight,
-                 init_from_file,
-                 param_filename,
                  tag_vocab,
                  word_vocab,
-                 test_time=True):
-        if init_from_file:
-            data=yaml.load(open(param_filename, "rb"))
-            self.word_context_size=data["word_context_size"]
-            self.embedding_size=data["embedding_size"]
-            self.objective_type=data["objective_type"]
-            self.param_reg_type=data["param_reg_type"]
-            self.param_reg_weight=data["param_reg_weight"]
-            self.tag_vocab=data["tag_vocab"]
-            self.word_vocab=data["word_vocab"]
+                 test_time=True,
+                 init_data=None):
+        if init_data is not None:
+            self.word_context_size=init_data["word_context_size"]
+            self.embedding_size=init_data["embedding_size"]
+            self.objective_type=init_data["objective_type"]
+            self.param_reg_type=init_data["param_reg_type"]
+            self.param_reg_weight=init_data["param_reg_weight"]
+            self.tag_vocab=init_data["tag_vocab"]
+            self.word_vocab=init_data["word_vocab"]
             self.num_tag=len(self.tag_vocab)
             self.num_word=len(self.word_vocab)
             # Following are parameters of the model.
             # These need to be instantiated.
-            laff = lambda nm : np.loads(data[nm])
+            laff = lambda nm : np.loads(init_data[nm])
             # laff means load arr from file. It takes (nm) name of variable
-            self.na_tag_emb=laff("tag_emb")
-            self.nv_S_emb=laff("S_emb")
-            self.na_word_emb=laff("word_emb")
+            self.na_tag_emb=laff("na_tag_emb")
+            self.na_word_emb=laff("na_word_emb")
             self.nam_T1=laff("nam_T1")
             self.nam_T2=laff("nam_T2")
             self.nam_Ttld1=laff("nam_Ttld1")
             self.nam_Ttld2=laff("nam_Ttld2")
             self.nat_W=laff("nat_W")
             self.nat_Wtld=laff("nat_Wtld")
+            self.na_S_emb=laff("na_S_emb")
         else:
             assert("E" not in tag_vocab)
             tag_vocab["E"]=len(tag_vocab)
@@ -263,13 +260,28 @@ class tag_rhmm(tag_order0hmm):
         """This function receives actual words and tags (not indices!) 
         and then returns their probabilties.
         """
-        assert len(tags) > 2
-        assert len(tags)==len(words)
-        return self._score_ao(
-            [self.get_from_tag_vocab(t) for t in tags+["E"]],
-            [self.get_from_word_vocab(w) for w in words]
-            )
-    
+        if len(tags) > 2 and len(tags)==len(words):
+            return self._score_ao(
+                [self.get_from_tag_vocab(t) for t in tags+["E"]],
+                [self.get_from_word_vocab(w) for w in words]
+                )
+        else:
+            logger.error("Bad input Tags: %s\nWords: %s\n"%(str(tags), str(words)))
+            raise ValueError
+
+    def update_ao(self, eta, tags, words):
+        """ The update when both tags and sentences are observed.
+        Note that in the case of cpd_type="lbl" we return a list with
+        gradients for self.params
+        """
+        if len(tags) > 2 and len(tags)==len(words):
+            return self._update_ao(eta,
+                               [self.get_from_tag_vocab(t) for t in tags+["E"]],
+                               [self.get_from_word_vocab(w) for w in words])
+        else:
+            logger.error("Bad input Tags: %s\nWords: %s\n"%(str(tags), str(words)))
+            raise ValueError
+        
     def make_tg_score_so(self, word_ids):
         pass
     
@@ -288,6 +300,7 @@ class tag_rhmm(tag_order0hmm):
                     tag_vocab=self.tag_vocab,
                     word_vocab=self.word_vocab,
                     na_tag_emb=self.na_tag_emb.dumps(),
+                    na_S_emb=self.na_S_emb.dumps(),
                     na_word_emb=self.na_word_emb.dumps(),
                     nam_T1=self.nam_T1.dumps(),
                     nam_T2=self.nam_T2.dumps(),

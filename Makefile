@@ -1,4 +1,4 @@
-.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train
+.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train profile_train quick_train res_train
 .SECONDARY:
 PYTEMPLATE = OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=$1,lib.amdlibm=True,mode=$2,gcc.cxxflags=-$3 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True,profile=$4' PYTHONPATH=$$PYTHONPATH:~/projects/genrich/src time python
 PYCMD := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,False)
@@ -15,16 +15,18 @@ res/%.tagstrip: res/%
 #####################################
 ### EVALUATION
 # This forces tuning of learning rate and batch size since the learning rate and the batch size are both 0. That triggers the batch size and learning rate tuning algorithm.
-D_TUNE_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
+TUNE_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~25000~NOACTION
 # The results of the order 0 model are the following.
 # This is on validation data with 1/4 of DEV.
 # Accuracy   : 87.393, Weighted Accuracy   : 84.169, Total: 4426
 # IV Accuracy: 88.743, Weighted IV Accuracy: 84.586, Total: 4042
 # OV Accuracy: 73.177, Weighted OV Accuracy: 73.177, Total: 384
-# This has the best learning rate and batch size. for the order0hmm. This rate was found after using D_TUNE_LEARNING_RATE
-D_BEST_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
-D_TUNE_LEARNING_HNMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
-DEFAULT := $(D_TUNE_LEARNING_HNMM)
+# This has the best learning rate and batch size. for the order0hmm. This rate was found after using TUNE_LEARNING_RATE
+BEST_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.04~sgd~100~NOACTION
+TUNE_LEARNING_RHMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~500~NOACTION
+# tmp_4rhmm.model
+BLIND_TRAIN_RHMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.005~sgd~25000~NOACTION
+DEFAULT := $(BLIND_TRAIN_RHMM)
 log_eval: log/eval_tag_$(DEFAULT)@wsj_tag.from_500.validate
 log/eval_tag_% :
 	$(MAKE) MYDEP1="log/predict_tag_$*.tagstrip" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ eval_tag_generic
@@ -128,6 +130,8 @@ profile/train_tag_% :
 #	The encoder converts the template file to a string
 # USAGE: make -s encode_train.setting
 #        make -s decode_(result of encode)
+d_%:
+	$(MAKE) -s decode_$($*)
 decode_%:
 	for param in $(TRAIN_TAG_CMD); do echo $$param; done
 ## ENCODE PARAMETER STRING
