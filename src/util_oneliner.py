@@ -1,6 +1,6 @@
 from math import log, exp
 import numpy as np
-import time, os, logging
+import time, os, logging, sys
 from contextlib import contextmanager
 import theano.tensor as T
 from util_theano_extension import log_softmax
@@ -29,9 +29,9 @@ def tictoc(name, logger=None):
     message="\n%s took </%0.3f> seconds.\n"%(
         name, time.time()-start_time)
     if logger is None:
-        logging.debug(message)
-    else:
-        logger.debug(message)
+        logger=logging
+    print >> sys.stderr, message
+    logger.debug(message)
     
 def mean(it_e):
     total=0.0

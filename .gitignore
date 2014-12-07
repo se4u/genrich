@@ -5,3 +5,7 @@ res/*src\*~
 res/*
 res
 tmp*
+quick/*
+profile/*
+run_train_sgd.log
+some_old_training_code.py

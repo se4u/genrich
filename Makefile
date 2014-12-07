@@ -1,8 +1,8 @@
-.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train profile_train quick_train res_train
+.PHONY: postagger_accuracy_small res/postag_small.model log/postag_small.pos.test.predict default_train profile_train quick_train res_train lp qp
 .SECONDARY:
 PYTEMPLATE = OMP_NUM_THREADS=10 THEANO_FLAGS='floatX=float32,warn_float64=ignore,optimizer=$1,lib.amdlibm=True,mode=$2,gcc.cxxflags=-$3 -L/home/prastog3/install/lib -I/home/prastog3/install/include,openmp=True,profile=$4' PYTHONPATH=$$PYTHONPATH:~/projects/genrich/src time python
 PYCMD := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,False)
-PYLIGHT := $(call PYTEMPLATE,fast_compile,FAST_COMPILE,O1,False)
+PYQUICK := $(call PYTEMPLATE,fast_compile,FAST_COMPILE,O1,False)
 PYPROFILE := $(call PYTEMPLATE,fast_run,FAST_RUN,O9,True)
 NOSETEST_CMD := nosetests --verbosity=3 --with-doctest --exe --pdb --processes=1
 test_all: # --failed --with-profile
@@ -26,7 +26,8 @@ BEST_LEARNING_ORDER0HMM := order0hmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.
 TUNE_LEARNING_RHMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~0~10~0~sgd~500~NOACTION
 # tmp_4rhmm.model
 BLIND_TRAIN_RHMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.005~sgd~25000~NOACTION
-DEFAULT := $(BLIND_TRAIN_RHMM)
+MINI_TRAIN_RHMM := order4rhmm~lbl10~LL~L2~0.001~0.2~0~NONE~wsj_tag.train.tag.vocab~wsj_tag.train.word.vocabtrunc~wsj_tag.train_sup.head2000~wsj_tag.train_unsup~wsj_tag.minivalidate~1234~1~10~0.005~sgd~25000~NOACTION
+DEFAULT := $(MINI_TRAIN_RHMM)
 log_eval: log/eval_tag_$(DEFAULT)@wsj_tag.from_500.validate
 log/eval_tag_% :
 	$(MAKE) MYDEP1="log/predict_tag_$*.tagstrip" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ eval_tag_generic
@@ -43,13 +44,16 @@ eval_tag_generic: $(MYDEP1) $(MYDEP2)
 # SOURCE : The trained postagger model,
 #	   The raw words that we want to postag using this model
 # Remove Stopat if you dont want it to stop
-log_predict: log/predict_tag_$(DEFAULT)@wsj_tag.validate.tagstrip
+lp log_predict: log/predict_tag_$(DEFAULT)@wsj_tag.validate.tagstrip
+qp quick_predict: quick/predict_tag_$(DEFAULT)@wsj_tag.validate.tagstrip
 PREDICT_OPT_EXTRACTOR = $(word $1,$(subst @, ,$*))
+PREDICT_CMD =  MYDEP1="res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1)" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ 
 log/predict_tag_% : 
-	$(MAKE) MYDEP1="res/train_tag_$(call PREDICT_OPT_EXTRACTOR,1)" MYDEP2="res/$(call PREDICT_OPT_EXTRACTOR,2)" TARGET=$@ STOPAT= predict_tag_generic
-
+	$(MAKE) $(PREDICT_CMD) STOPAT= MYPYCMD="$(PYCMD)" predict_tag_generic
+quick/predict_tag_% : 
+	$(MAKE) $(PREDICT_CMD) STOPAT=5 MYPYCMD="$(PYQUICK)" predict_tag_generic
 predict_tag_generic: $(MYDEP1) $(MYDEP2)
-	$(PYCMD) \
+	$(MYPYCMD) \
 	src/predict_tag.py \
 	    $(MYDEP1) \
 	    $(MYDEP2) \
@@ -119,7 +123,7 @@ res/train_tag_% :
 	$(PYCMD) \
 		$(TRAIN_CMD)
 quick/train_tag_% : 
-	$(PYLIGHT) \
+	$(PYQUICK) \
 		$(TRAIN_CMD)
 profile/train_tag_% : 
 	$(PYPROFILE) \

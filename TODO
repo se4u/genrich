@@ -1,3 +1,6 @@
+Do a speed up of the parser using the tricks of pruning and refactoring.
+Write a unit test of the tag_rhmm on a specific model parameter etc.
+
 DEBUG:root:The validation error of different batches and learning rates was the following: {
 (1, 0.04): 0.8057851239669421,
 (5, 0.2): 0.7913223140495868,

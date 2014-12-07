@@ -388,6 +388,8 @@ class tag_order0hmm(tag_baseclass):
             return self.word_vocab["<OOV>"]
         
     def get_from_tag_vocab(self, tag):
+        # try:
         return self.tag_vocab[tag]
-        
+        # except:
+        #     return self.tag_vocab["<OOV>"]
     

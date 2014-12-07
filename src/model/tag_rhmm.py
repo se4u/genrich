@@ -4,11 +4,11 @@ tags and k previous words while assiging a tag to the current word.
 # Created: 23 November 2014
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
-import logging, sys
+import logging, sys, math
+import numpy as np
 import util_oneliner
 from util_theano_extension import log_softmax
 from tag_order0hmm import tag_order0hmm
-import numpy as np
 import theano.tensor as T
 from theano import function, scan, shared
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
@@ -20,6 +20,9 @@ logger=logging
 #   na_ means numpy array
 #   nam_ means numpy array representing a transforming matrix
 #   nat_ means numpy array, a 3d tensor with a number of transformation matrices
+def get_previous_max(w, j, H):
+    return [w[e] for e in range(j, max(j-H,-1), -1)]
+
 def lw_s(tg_word_idx,
          tg_tagh_emb1, tg_S_emb,
          tg_word_emb, tg_Ttld1, tg_Ttld2):
@@ -82,13 +85,13 @@ class tag_rhmm(tag_order0hmm):
     It basically conditions on a lot of word/tag features.
     """
     def __init__(self,
-                 word_context_size,
-                 embedding_size,
-                 objective_type,
-                 param_reg_type,
-                 param_reg_weight,
-                 tag_vocab,
-                 word_vocab,
+                 word_context_size=None,
+                 embedding_size=None,
+                 objective_type=None,
+                 param_reg_type=None,
+                 param_reg_weight=None,
+                 tag_vocab=None,
+                 word_vocab=None,
                  test_time=True,
                  init_data=None):
         if init_data is not None:
@@ -113,7 +116,7 @@ class tag_rhmm(tag_order0hmm):
             self.nam_Ttld2=laff("nam_Ttld2")
             self.nat_W=laff("nat_W")
             self.nat_Wtld=laff("nat_Wtld")
-            self.na_S_emb=laff("na_S_emb")
+            self.na_S_emb=laff("na_S_emb").flatten()
         else:
             assert("E" not in tag_vocab)
             tag_vocab["E"]=len(tag_vocab)
@@ -133,7 +136,7 @@ class tag_rhmm(tag_order0hmm):
             make_W = lambda : np.random.randn(self.word_context_size,
                                               es,es)/pow(es,0.5)
             # Added 2 to accomodate embeddings (E) End tag
-            self.na_S_emb=util_oneliner.get_random_emb(1,es)
+            self.na_S_emb=util_oneliner.get_random_emb(1,es).flatten()
             self.na_tag_emb=util_oneliner.get_random_emb(self.num_tag,es)
             self.na_word_emb=util_oneliner.get_random_emb(self.num_word,es)
             self.nam_T1=make_T()
@@ -158,31 +161,53 @@ class tag_rhmm(tag_order0hmm):
         # Now create theano graph of log likelihood of supervised sequence
         tag_ids=T.ivector("tag_ids")
         word_ids=T.ivector("word_ids")
+        eta=T.fscalar("eta")
+        tag_id=T.iscalar("tag_id")
+        word_id=T.iscalar("word_id")
+        tagh_emb1=T.dvector("tagh_emb1")
+        tagh_emb2=T.dvector("tagh_emb2")
         if self.objective_type=="LL":
-            # Compute the scores
-            self._tg_score_ao=self.make_tg_score_ao(tag_ids,word_ids)+\
-                self.get_tg_penalty(test_time)
-            # Compute the gradient
-            self._tg_gradient_ao=T.grad(self._tg_score_ao,self.params)
-            # Following are compiled functions.
-            self._score_ao=function([tag_ids, word_ids], self._tg_score_ao,
-                                    name="_score_ao")
-            self._gradient_ao=function([tag_ids, word_ids],self._tg_gradient_ao,
-                                       name="_gradient_ao")
-            eta=T.fscalar("eta")
-            self._update_ao=function([eta, tag_ids, word_ids],
-                                     self._tg_gradient_ao,
-                                     name="update_ao",
-                                     updates=[(p, p+eta*g)
-                                              for (g, p)
-                                              in zip(self._tg_gradient_ao,
-                                                     self.params)])
+            # The following compiled functions are used for predictions.
+            _lt_s=self.get_tg_lt_s(tag_id)
+            self._lt_s = function([tag_id], _lt_s, name="get_tg_lt_s")
+            
+            _lw_s=self.get_tg_lw_s(word_id, tagh_emb1)
+            self._lw_s = function([word_id, tagh_emb1], _lw_s,
+                                  name="get_tg_lw_s")
+
+            _lt_rest=self.get_tg_lt_rest(tag_id, tagh_emb1, tagh_emb2, word_ids)
+            self._lt_rest = function([tag_id, tagh_emb1, tagh_emb2, word_ids],
+                                     _lt_rest, name="_lt_rest")
+
+            _lw_rest=self.get_tg_lw_rest(word_id, tagh_emb1, tagh_emb2, word_ids)
+            self._lw_rest = function([word_id, tagh_emb1, tagh_emb2, word_ids],
+                                     _lw_rest, name="_lw_rest")
             if test_time:
-                tg_score_so=self.make_tg_score_so(word_ids)
-                self._score_so=function([word_ids], tg_score_so,
-                                        name="_score_so")
-            else:
+                # tg_score_so=self.make_tg_score_so(word_ids)
+                # self._score_so=function([word_ids], tg_score_so,
+                #                         name="_score_so")
                 pass
+            else:
+                # Compute the scores
+                self._tg_score_ao=self.make_tg_score_ao(tag_ids,word_ids)+\
+                    self.get_tg_penalty(test_time)
+                # Compute the gradient
+                self._tg_gradient_ao=T.grad(self._tg_score_ao,self.params)
+                # Following are compiled functions.
+                self._score_ao=function([tag_ids, word_ids], self._tg_score_ao,
+                                        name="_score_ao")
+                self._gradient_ao=function([tag_ids, word_ids],
+                                           self._tg_gradient_ao,
+                                           name="_gradient_ao")
+                self._update_ao=function([eta, tag_ids, word_ids],
+                                         self._tg_gradient_ao,
+                                         name="update_ao",
+                                         updates=[(p, p+eta*g)
+                                                  for (g, p)
+                                                  in zip(self._tg_gradient_ao,
+                                                         self.params)])
+
+            
         else:
             raise NotImplementedError(
                     "objective_type: %s"%self.cpd_type)
@@ -223,26 +248,14 @@ class tag_rhmm(tag_order0hmm):
                            tg_Wtld = tg_Wtld)
             return p_lt + p_lw
         
-        pt1_s = lt_s(tg_tag_idx=tag_ids[0],
-                     tg_S_emb=self.tg_S_emb.flatten(),
-                     tg_tag_emb=self.tg_tag_emb,
-                     tg_T1=self.tg_T1)
-        pw1_s = lw_s(tg_word_idx=word_ids[0],
-                     tg_tagh_emb1=self.tg_tag_emb[tag_ids[0],:].flatten(),
-                     tg_S_emb=self.tg_S_emb.flatten(),
-                     tg_word_emb=self.tg_word_emb,
-                     tg_Ttld1=self.tg_Ttld1,
-                     tg_Ttld2=self.tg_Ttld2)
-        pt2_t1sw = lt_rest(tg_tag_idx = tag_ids[1],
-                           tg_tagh_emb1 = \
-                               self.tg_tag_emb[tag_ids[0],:].flatten(),
-                           tg_tagh_emb2 = self.tg_S_emb.flatten(),
-                           tg_wordh_idx_arr = word_ids[0:1],
-                           tg_tag_emb = self.tg_tag_emb,
-                           tg_word_emb = self.tg_word_emb,
-                           tg_T1 = self.tg_T1,
-                           tg_T2 = self.tg_T2,
-                           tg_W = self.tg_W)
+        pt1_s = self.get_tg_lt_s(tg_tag_idx=tag_ids[0])
+        pw1_s = self.get_tg_lw_s(tg_word_idx=word_ids[0],
+                                 tg_tagh_emb=self.tg_tag_emb[tag_ids[0],:])
+        pt2_t1sw = self.get_tg_lt_rest(tg_tag_idx = tag_ids[1],
+                                       tg_tagh_emb1 = self.tg_tag_emb[tag_ids[0],:],
+                                       tg_tagh_emb2 = self.tg_S_emb,
+                                       tg_wordh_idx_arr = word_ids[0:1])
+        
         p_rest, _ = scan(_get_lp_rest_of_sentence,
                          sequences=T.arange(1,word_ids.shape[0]),
                          non_sequences=[self.word_context_size,
@@ -283,13 +296,125 @@ class tag_rhmm(tag_order0hmm):
             raise ValueError
         
     def make_tg_score_so(self, word_ids):
-        pass
+        """ TODO
+        """
+        return np.nan
+
+    def _c(self, i):
+        return i%self.num_tag
+    def _p(self, i):
+        return math.floor(i/self.num_tag)
+    def _geti(self, c, pt):
+        return c*self.num_tag+(0 if pt =="S" else pt)
+    def _irange(self, j):
+        return range(self.num_tag) if j == 0 else range(self.num_tag**2)
+    def _p3t(self, j):
+        return "S" if j==1 else range(self.num_tag)
+    def _pnt(self):
+        return range(self.num_tag)
+    def _p2t(self, j):
+        return [0] if j==0 else range(self.num_tag)
     
     def predict_posterior_tag_sequence(self, words):
-        pass
+        assert len(words)>2
+        words=[self.get_from_word_vocab(w) for w in words]
+        tags=[None]*len(words)
+        score=[None]*len(words)
+        with util_oneliner.tictoc("Making Trellis"):
+            (la,lb)=self.get_lalpha_lbeta_trellis(np.asarray(words))
+        for j in xrange(len(words)):
+            l_tj_eq_i=[(tag,
+                        util_oneliner.log_sum_exp([la(self._geti(i, k), j)
+                                                   + lb(self._geti(i, k),j)
+                                                   for k
+                                                   in self._p2t(j)])
+                        )
+                       for (tag, i)
+                       in self.tag_vocab.iteritems()]
+            tags[j], score[j]=max(l_tj_eq_i, key=lambda x: x[1])
+            score[j]=float(score[j])
+        return tags, score
+
+    def get_lalpha_lbeta_trellis(self, vec_word):
+        lalpha = np.zeros((self.num_tag**2, len(vec_word)))
+        lbeta = np.zeros((self.num_tag**2, len(vec_word)))
+        get_bj = lambda aj: -aj + len(vec_word) - 1
+        aj=0
+        bj=get_bj(aj)
+        H=self.word_context_size
+        # gtei means get tag embedding at index i
+        gtei = lambda i: self.na_S_emb.flatten() if i=="S" else self.na_tag_emb[i] 
+        tc = lambda i: gtei(self._c(i))
+        tp = lambda i: gtei(self._p(i))
+        for i in self._irange(aj):
+            lalpha[i,aj]=self._lt_s(self._c(i))+self._lw_s(vec_word[0], tc(i))
+        for i in self._irange(bj):
+            lbeta[i,bj]=self._lt_rest(self.get_from_tag_vocab("E"),tc(i),tp(i),
+                get_previous_max(vec_word, len(vec_word)-1, H))
+        for aj in xrange(1,len(vec_word)):
+            print >> sys.stderr, ""
+            for i in self._irange(aj):
+                print >> sys.stderr, i,
+                lalpha[i, aj]=util_oneliner.log_sum_exp([
+                    self._lt_rest(self._c(i), tp(i), gtei(k),
+                                 get_previous_max(vec_word, aj-1, H))
+                    +self._lw_rest(vec_word[aj], tc(i), tp(i),
+                                  get_previous_max(vec_word, aj-1, H))
+                    +lalpha[self._geti(self._p(i), k), aj-1]
+                    for k in self._p3t(aj)])
+            for i in self._irange(bj):
+                print >> sys.stderr, i,
+                # Calculate bj
+                bj=get_bj(aj)
+                lbeta[i, bj]=util_oneliner.log_sum_exp([
+                    self._lt_rest(k, tc(i), tp(i),
+                                 get_previous_max(vec_word, bj, H))
+                    +self._lw_rest(vec_word[bj+1], gtei(k), tc(i),
+                                  get_previous_max(vec_word, bj, H))
+                    +lbeta[self._geti(self._c(i), k), bj+1]
+                    for k in self._pnt()])
+        return (lalpha, lbeta)
+    
+    def get_tg_lt_s(self, tg_tag_idx):
+        return lt_s(tg_tag_idx=tg_tag_idx,
+                    tg_S_emb=self.tg_S_emb.flatten(),
+                    tg_tag_emb=self.tg_tag_emb,
+                    tg_T1=self.tg_T1)
+                                       
+    def get_tg_lw_s(self, tg_word_idx, tg_tagh_emb):
+        return lw_s(tg_word_idx=tg_word_idx,
+                     tg_tagh_emb1=tg_tagh_emb.flatten(),
+                     tg_S_emb=self.tg_S_emb.flatten(),
+                     tg_word_emb=self.tg_word_emb,
+                     tg_Ttld1=self.tg_Ttld1,
+                     tg_Ttld2=self.tg_Ttld2)
+                                       
+    def get_tg_lt_rest(self, tg_tag_idx, tg_tagh_emb1, tg_tagh_emb2,
+                       tg_wordh_idx_arr):
+        return lt_rest(tg_tag_idx = tg_tag_idx,
+                       tg_tagh_emb1 = tg_tagh_emb1.flatten(),
+                       tg_tagh_emb2 = tg_tagh_emb2.flatten(),
+                       tg_wordh_idx_arr = tg_wordh_idx_arr,
+                       tg_tag_emb = self.tg_tag_emb,
+                       tg_word_emb = self.tg_word_emb,
+                       tg_T1 = self.tg_T1,
+                       tg_T2 = self.tg_T2,
+                       tg_W = self.tg_W)
+    
+    def get_tg_lw_rest(self, tg_word_idx, tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr):
+        return lw_rest(tg_word_idx = tg_word_idx,
+                       tg_tagh_emb1 = tg_tagh_emb1,
+                       tg_tagh_emb2 = tg_tagh_emb2,
+                       tg_wordh_idx_arr = tg_wordh_idx_arr,
+                       tg_word_emb = self.tg_word_emb,
+                       tg_Ttld1 = self.tg_Ttld1,
+                       tg_Ttld2 = self.tg_Ttld2,
+                       tg_Wtld = self.tg_Wtld)
     
     def predict_viterbi_tag_sequence(self, words):
-        pass
+        """ TODO
+        """
+        raise NotImplementedError
 
     def get_dict_for_save(self):
         return dict(word_context_size=self.word_context_size,
