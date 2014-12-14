@@ -1,16 +1,16 @@
 """An implementation of the rhmm model. Which leverages previous two
 tags and k previous words while assiging a tag to the current word. 
 """
-# Created: 23 November 2014
+__date__ = "23 November 2014"
 __author__  = "Pushpendre Rastogi"
 __contact__ = "pushpendre@jhu.edu"
-import logging, sys, math
 import numpy as np
-import util_oneliner
-from util_theano_extension import log_softmax
-from tag_order0hmm import tag_order0hmm
 import theano.tensor as T
+import logging, sys
+from scipy.io import savemat
 from theano import function, scan, shared
+from tag_order0hmm import tag_order0hmm
+import util_oneliner, util_theano_extension
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger=logging
 # emb means embedding
@@ -21,6 +21,8 @@ logger=logging
 #   nam_ means numpy array representing a transforming matrix
 #   nat_ means numpy array, a 3d tensor with a number of transformation matrices
 def get_previous_max(w, j, H):
+    """ This returns the elements from w[j] to w[j-H]
+    """
     return [w[e] for e in range(j, max(j-H,-1), -1)]
 
 def lw_s(tg_word_idx,
@@ -32,7 +34,7 @@ def lw_s(tg_word_idx,
     tg_tagh_emb1, tg_S_emb are the previous tags embeddings.
     The last 3 parameters are the embedding data srtuctures.
     """
-    return log_softmax(tg_word_idx,
+    return util_theano_extension.log_softmax(tg_word_idx,
                        T.dot(tg_word_emb, 
                              T.dot(tg_Ttld1, tg_tagh_emb1)+
                              T.dot(tg_Ttld2, tg_S_emb))
@@ -55,19 +57,47 @@ def lt_rest(tg_tag_idx, tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr,
     The rest of the arguments are parameters of the model.
     All the embeddings contain the embeddings/features of words/tags in a row.
     """
+    table = lt_rest_unnormalized_table(tg_tagh_emb1,
+                                         tg_tagh_emb2,
+                                         tg_wordh_idx_arr,
+                                         tg_tag_emb,
+                                         tg_word_emb,
+                                         tg_T1,
+                                         tg_T2,
+                                         tg_W)
+    return util_theano_extension.log_softmax(tg_tag_idx, table)
+
+def lt_rest_unnormalized_table(tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr,
+                                 tg_tag_emb, tg_word_emb, tg_T1, tg_T2, tg_W):
+    """ This function computes the unnormalized pdf in the log space
+    """
     _transform_wh_emb_using_corresponding_W_mat=\
         lambda i, w_idx: T.dot(tg_W[i], tg_word_emb[w_idx,:])
-    return log_softmax(tg_tag_idx,
-                       T.dot(tg_tag_emb,
-                             T.dot(tg_T1, tg_tagh_emb1) +
-                             T.dot(tg_T2, tg_tagh_emb2) +
-                             scan(_transform_wh_emb_using_corresponding_W_mat,
-                                  sequences=[T.arange(tg_wordh_idx_arr.shape[0]),
-                                             tg_wordh_idx_arr
-                                             ]
-                                  )[0].sum(0)
-                             )
-                       )
+    table = T.dot(tg_tag_emb,
+                  T.dot(tg_T1, tg_tagh_emb1) +
+                  T.dot(tg_T2, tg_tagh_emb2) +
+                  scan(_transform_wh_emb_using_corresponding_W_mat,
+                       sequences=[T.arange(tg_wordh_idx_arr.shape[0]),
+                                  tg_wordh_idx_arr
+                                  ]
+                       )[0].sum(0)
+                  )
+    return table
+
+def lt_rest_normalized_table(tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr,
+                               tg_tag_emb, tg_word_emb, tg_T1, tg_T2, tg_W):
+    """ This function computes the unnormalized pdf in the log space
+    """
+    table = lt_rest_unnormalized_table(tg_tagh_emb1,
+                                         tg_tagh_emb2,
+                                         tg_wordh_idx_arr,
+                                         tg_tag_emb,
+                                         tg_word_emb,
+                                         tg_T1,
+                                         tg_T2,
+                                         tg_W)
+    denominator = util_theano_extension.log_sum_exp(table)
+    return table-denominator
 
 def lw_rest(tg_word_idx, tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr,
             tg_word_emb, tg_Ttld1, tg_Ttld2, tg_Wtld):
@@ -80,6 +110,37 @@ def lw_rest(tg_word_idx, tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr,
                    tg_word_emb, tg_word_emb,
                    tg_Ttld1, tg_Ttld2, tg_Wtld)
 
+def save_to_mat_file(init_data, outfile_name):
+    def get_list(vocab_dict):
+        l=np.zeros((len(vocab_dict),), dtype=np.object)
+        for w, i in vocab_dict.iteritems():
+            l[i]=w
+        return l
+    laff = lambda nm : np.loads(init_data[nm])
+    tag_vocab=get_list(init_data["tag_vocab"])
+    word_vocab=get_list(init_data["word_vocab"])
+    with open(outfile_name, "wb") as f:
+        savemat(f,
+                dict(word_context_size=init_data["word_context_size"],
+                     embedding_size=init_data["embedding_size"],
+                     objective_type=init_data["objective_type"],
+                     param_reg_type=init_data["param_reg_type"],
+                     param_reg_weight=init_data["param_reg_weight"],
+                     tag_vocab=tag_vocab,
+                     word_vocab=word_vocab,
+                     tagemb=laff("na_tag_emb"),
+                     wordemb=laff("na_word_emb"),
+                     T1=laff("nam_T1"),
+                     T2=laff("nam_T2"),
+                     Tt1=laff("nam_Ttld1"),
+                     Tt2=laff("nam_Ttld2"),
+                     W=laff("nat_W"),
+                     Wt=laff("nat_Wtld"),
+                     S=laff("na_S_emb")),
+                oned_as='column',
+                format='5',
+                appendmat=False)
+        
 class tag_rhmm(tag_order0hmm):
     """ The rich hmm class.
     It basically conditions on a lot of word/tag features.
@@ -178,7 +239,13 @@ class tag_rhmm(tag_order0hmm):
             _lt_rest=self.get_tg_lt_rest(tag_id, tagh_emb1, tagh_emb2, word_ids)
             self._lt_rest = function([tag_id, tagh_emb1, tagh_emb2, word_ids],
                                      _lt_rest, name="_lt_rest")
-
+            _lt_rest_normalized_table = \
+                self.get_tg_lt_rest_normalized_table(tagh_emb1, tagh_emb2, word_ids)
+            self._lt_rest_normalized_table = function([tagh_emb1,
+                                                       tagh_emb2,
+                                                       word_ids],
+                                                      _lt_rest_normalized_table,
+                                                      name = "lt_rest_normalized_table")
             _lw_rest=self.get_tg_lw_rest(word_id, tagh_emb1, tagh_emb2, word_ids)
             self._lw_rest = function([word_id, tagh_emb1, tagh_emb2, word_ids],
                                      _lw_rest, name="_lw_rest")
@@ -300,22 +367,14 @@ class tag_rhmm(tag_order0hmm):
         """
         return np.nan
 
-    def _c(self, i):
-        return i%self.num_tag
-    def _p(self, i):
-        return math.floor(i/self.num_tag)
-    def _geti(self, c, pt):
-        return c*self.num_tag+(0 if pt =="S" else pt)
-    def _irange(self, j):
-        return range(self.num_tag) if j == 0 else range(self.num_tag**2)
-    def _p3t(self, j):
-        return "S" if j==1 else range(self.num_tag)
-    def _pnt(self):
-        return range(self.num_tag)
-    def _p2t(self, j):
-        return [0] if j==0 else range(self.num_tag)
     
     def predict_posterior_tag_sequence(self, words):
+        """ This is the main function that is used for assigning tags to sentences.
+        First thing however that you should do is that you should test
+        that the training really was good. In order to do that you
+        should have analyzed the parameters that were learnt by the
+        model after supervised training.
+        """
         assert len(words)>2
         words=[self.get_from_word_vocab(w) for w in words]
         tags=[None]*len(words)
@@ -324,8 +383,8 @@ class tag_rhmm(tag_order0hmm):
             (la,lb)=self.get_lalpha_lbeta_trellis(np.asarray(words))
         for j in xrange(len(words)):
             l_tj_eq_i=[(tag,
-                        util_oneliner.log_sum_exp([la(self._geti(i, k), j)
-                                                   + lb(self._geti(i, k),j)
+                        util_oneliner.log_sum_exp([la[self._geti(i, k), j]
+                                                   + lb[self._geti(i, k),j]
                                                    for k
                                                    in self._p2t(j)])
                         )
@@ -335,44 +394,103 @@ class tag_rhmm(tag_order0hmm):
             score[j]=float(score[j])
         return tags, score
 
+    def _geti(self, c, pt):
+        return (0 if pt=="S" else pt)*self.num_tag+c
+    def _irange(self, j):
+        return range(self.num_tag) if j == 0 else range(self.num_tag**2)
+    def _p3t(self, j):
+        return ["S"] if j==1 else range(self.num_tag)
+    def _pnt(self):
+        return range(self.num_tag)
+    def _p2t(self, j):
+        return [0] if j==0 else range(self.num_tag)
+    def _c(self, i):
+        return i%self.num_tag
+    def _p(self, i):
+        return int(i/self.num_tag)
+    def gtei(self, i):
+        "gtei means get tag embedding at index i"
+        return self.na_S_emb.flatten() if i=="S" else self.na_tag_emb[i]
+    
     def get_lalpha_lbeta_trellis(self, vec_word):
+        """ This method return a tuple of maptices that contains the
+        alpha and beta trellis. That trellis is then used for decoding.
+        """
         lalpha = np.zeros((self.num_tag**2, len(vec_word)))
         lbeta = np.zeros((self.num_tag**2, len(vec_word)))
-        get_bj = lambda aj: -aj + len(vec_word) - 1
-        aj=0
-        bj=get_bj(aj)
+        # INITIALIZE CONSTANTS
         H=self.word_context_size
-        # gtei means get tag embedding at index i
-        gtei = lambda i: self.na_S_emb.flatten() if i=="S" else self.na_tag_emb[i] 
-        tc = lambda i: gtei(self._c(i))
-        tp = lambda i: gtei(self._p(i))
+        aj=0
+        bj=-aj + len(vec_word) - 1        
+        # Populate First column of Alpha trellis
         for i in self._irange(aj):
-            lalpha[i,aj]=self._lt_s(self._c(i))+self._lw_s(vec_word[0], tc(i))
+            l_t_given_S = self._lt_s(self._c(i))
+            l_w_given_t_and_S = util_oneliner.cache(
+                "wgts",
+                lambda vw, tci: self._lw_s(vw, self.gtei(tci)),
+                (vec_word[0], self._c(i))
+                )
+            lalpha[i,aj]= l_t_given_S+l_w_given_t_and_S
+        # Populate last column of Beta trellis
         for i in self._irange(bj):
-            lbeta[i,bj]=self._lt_rest(self.get_from_tag_vocab("E"),tc(i),tp(i),
-                get_previous_max(vec_word, len(vec_word)-1, H))
-        for aj in xrange(1,len(vec_word)):
-            print >> sys.stderr, ""
-            for i in self._irange(aj):
-                print >> sys.stderr, i,
-                lalpha[i, aj]=util_oneliner.log_sum_exp([
-                    self._lt_rest(self._c(i), tp(i), gtei(k),
-                                 get_previous_max(vec_word, aj-1, H))
-                    +self._lw_rest(vec_word[aj], tc(i), tp(i),
-                                  get_previous_max(vec_word, aj-1, H))
-                    +lalpha[self._geti(self._p(i), k), aj-1]
-                    for k in self._p3t(aj)])
-            for i in self._irange(bj):
-                print >> sys.stderr, i,
-                # Calculate bj
-                bj=get_bj(aj)
-                lbeta[i, bj]=util_oneliner.log_sum_exp([
-                    self._lt_rest(k, tc(i), tp(i),
-                                 get_previous_max(vec_word, bj, H))
-                    +self._lw_rest(vec_word[bj+1], gtei(k), tc(i),
-                                  get_previous_max(vec_word, bj, H))
-                    +lbeta[self._geti(self._c(i), k), bj+1]
-                    for k in self._pnt()])
+            tc=self.gtei(self._c(i))
+            tp=self.gtei(self._p(i))
+            lbeta[i,bj]=self._lt_rest(self.get_from_tag_vocab("E"),
+                                      tc,
+                                      tp,
+                                      get_previous_max(vec_word,
+                                                       len(vec_word)-1,
+                                                       H)
+                                      )
+        # Initialize Lambdas used for filling trellis
+        util_oneliner.purge_cache()
+        # w_g_tc_tp_lambda means l(w given tc and tp)
+        w_g_tc_tp_lambda = lambda aj, tci, tpi: self._lw_rest(
+            vec_word[aj+1],
+            self.gtei(tci),
+            self.gtei(tpi),
+            get_previous_max(vec_word, aj, H))
+        # tagpdf gives an entire normalized pdf based on the context provided to it.
+        tagpdf_p_k_j_lambda = lambda p, k, j: self._lt_rest_normalized_table(
+            self.gtei(p),
+            self.gtei(k),
+            get_previous_max(vec_word, j, H))
+        # This loop populates alpha
+        with util_oneliner.tictoc("Populating Alpha Trellis"):
+            for aj in xrange(1,len(vec_word)):
+                # This populates one column of alpha
+                for i in self._irange(aj):
+                    p_word=util_oneliner.purgable_cache(
+                        "w_g_tc_tp",
+                        w_g_tc_tp_lambda,
+                        (aj-1, self._c(i), self._p(i)))
+                    p_tag_g_tag = util_oneliner.log_sum_exp([
+                            util_oneliner.purgable_cache(
+                                "tagpdf_p_k_j",
+                                tagpdf_p_k_j_lambda,
+                                (self._p(i), k, aj-1))[self._c(i)] 
+                            + lalpha[self._geti(self._p(i), k), aj-1]
+                            for k
+                            in self._p3t(aj)])
+                    lalpha[i, aj] = p_word + p_tag_g_tag
+                        
+        # This loop populates beta
+        with util_oneliner.tictoc("Populating Beta trellis"):
+            for bj in xrange(len(vec_word)-2, -1, -1):
+                # This populates one column of beta
+                for i in self._irange(bj):
+                    lbeta[i, bj]=util_oneliner.log_sum_exp([
+                            util_oneliner.purgable_cache(
+                                "tagpdf_p_k_j",
+                                tagpdf_p_k_j_lambda,
+                                (self._c(i), self._p(i), bj))[k]
+                            +util_oneliner.purgable_cache(
+                                "w_g_tc_tp",
+                                w_g_tc_tp_lambda,
+                                (bj, k, self._c(i)))
+                            +lbeta[self._geti(self._c(i), k), bj+1]
+                            for k
+                            in self._pnt()])
         return (lalpha, lbeta)
     
     def get_tg_lt_s(self, tg_tag_idx):
@@ -400,6 +518,19 @@ class tag_rhmm(tag_order0hmm):
                        tg_T1 = self.tg_T1,
                        tg_T2 = self.tg_T2,
                        tg_W = self.tg_W)
+    
+    def get_tg_lt_rest_normalized_table(self, tg_tagh_emb1,
+                                        tg_tagh_emb2,
+                                        tg_wordh_idx_arr):
+        return lt_rest_normalized_table(
+            tg_tagh_emb1 = tg_tagh_emb1.flatten(),
+            tg_tagh_emb2 = tg_tagh_emb2.flatten(),
+            tg_wordh_idx_arr = tg_wordh_idx_arr,
+            tg_tag_emb = self.tg_tag_emb,
+            tg_word_emb = self.tg_word_emb,
+            tg_T1 = self.tg_T1,
+            tg_T2 = self.tg_T2,
+            tg_W = self.tg_W)
     
     def get_tg_lw_rest(self, tg_word_idx, tg_tagh_emb1, tg_tagh_emb2, tg_wordh_idx_arr):
         return lw_rest(tg_word_idx = tg_word_idx,

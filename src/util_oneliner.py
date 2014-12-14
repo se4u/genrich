@@ -82,3 +82,29 @@ def get_random_emb(vocab_size, embedding_size):
     emb_arr=np.random.randn(vocab_size,
                             embedding_size)/pow(vocab_size, 0.5)
     return emb_arr
+global __mycache
+__mycache={};
+def cache(tag, f, param):
+    global __mycache
+    try:
+        return __mycache[(tag,param)]
+    except:
+        v=f(*(param))
+        __mycache[(tag,param)]=v
+        return v
+
+global __mypcache
+__mypcache={}
+def purgable_cache(tag, f, param):
+    global __mypcache
+    try:
+        return __mypcache[(tag,param)]
+    except:
+        v=f(*(param))
+        __mypcache[(tag,param)]=v
+        return v
+
+def purge_cache():
+    global __mypcache
+    del __mypcache
+    __mypcache={}
