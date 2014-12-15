@@ -8,8 +8,6 @@ from util_oneliner import tictoc
 global starting_time
 global sentence_done
 
-
-
 starting_time=None
 sentence_done=0
 model_to_load=sys.argv[1]
@@ -56,6 +54,8 @@ with tictoc("Tagging sentences"):
             if sentence_limit is not None and i >= sentence_limit:
                 break
             words=sentence.strip().split()
+            if len(words)<2:
+                continue
             total_tokens+=len(words)
             with tictoc("Predicting tags"):
                 if words[-1]==".":

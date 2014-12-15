@@ -34,11 +34,14 @@ signal.signal(signal.SIGINT, signal_handler)
 def tune_batch_size_learning_rate(mo_model,
                                   sup_train_fn,
                                   validation_fn,
-                                  batch_sizes=(10, 5, 3, 1),
+                                  batch_sizes=(5,3,1),
                                   learning_rates=tuple(pow(5,-i)
-                                                       for i in range(6,0,-1)),
+                                                       for i in range(5,2,-1)),
                                   quota=500):
     """ Tune the batch size and learning rate over the range that is supplied.
+    The validation_fn is name of the file on which the performance is checked
+    The sup_train_fn is the name of the file from which a prescribed quota of lines are used for training.
+    The quota is the number of sentences that are trained on before checking the performance.
     """
     d={}
     initial_values=[e.get_value() for e in mo_model.params]
@@ -51,10 +54,11 @@ def tune_batch_size_learning_rate(mo_model,
                     if batch_idx*batch_size > quota:
                         break
                     words=[[e.split('/')[0] for e in row]
-                           for row in batch]
+                           for row in batch
+                           if len(row) > 2]
                     tags=[[e.split('/')[1] for e in row]
-                          for row in batch]
-
+                          for row in batch
+                          if len(row) > 2]
                     iter_update_gradient=\
                         mo_model.batch_update_ao(learning_rate, tags, words)
                     debug_str=' '.join([str(e) for e
@@ -160,6 +164,7 @@ def train_model(mo_model,
     return mo_model
             
 if __name__=='__main__':
+    error_flag=False
     model_type = options['MODEL_TYPE']
     tag_vocab=get_vocab_from_file(open(options['TAG_VOCAB_FILE'],'rb'))
     word_vocab=get_vocab_from_file(open(options['WORD_VOCAB_FILE'],'rb'))
@@ -216,7 +221,9 @@ if __name__=='__main__':
             logger.critical(str(__ex))
             logger.critical("""Caught some unknown exception. Would
 try to save the model and exit asap""")
+            error_flag=True
     with tictoc('Saving model'):
         ensure_dir(options['SAVE_FILE'])
         mo_model.save(options['SAVE_FILE'])
-
+        if error_flag:
+            exit(1)

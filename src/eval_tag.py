@@ -59,6 +59,6 @@ sys.stdout.write(
               100*(correct_iv)/(total_iv),
               100*(we_correct_iv)/(we_total_iv),
               total_iv,
-              100*(correct_ov)/(total_ov),
-              100*(we_correct_ov)/(we_total_ov),
+              -1 if total_ov ==0 else 100*(correct_ov)/(total_ov),
+              -1 if we_total_ov == 0 else 100*(we_correct_ov)/(we_total_ov),
               total_ov))

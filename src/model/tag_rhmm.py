@@ -362,6 +362,26 @@ class tag_rhmm(tag_order0hmm):
             logger.error("Bad input Tags: %s\nWords: %s\n"%(str(tags), str(words)))
             raise ValueError
         
+    def batch_update_ao(self, eta, tags_list, words_list):
+        gradient=None
+        for i, (tags, words) in enumerate(zip(tags_list, words_list)):
+            assert len(tags) > 2 and len(tags)==len(words)
+            tag_ids=[self.get_from_tag_vocab(t) for t in tags+["E"]]
+            word_ids=[self.get_from_word_vocab(w) for w in words]
+            grad = self._gradient_ao(tag_ids, word_ids)
+            if i==0:
+                gradient=grad
+            else:
+                ip1 = float(i+1)
+                for j in xrange(len(grad)):
+                    gradient[j]*=(float(i)/ip1)
+                    gradient[j]+=grad[j]*(1.0/ip1)
+        for j, e in enumerate(self.params):
+            e.set_value(
+                e.get_value(borrow=True)+eta*gradient[j],
+                borrow=True)
+        return gradient
+    
     def make_tg_score_so(self, word_ids):
         """ TODO
         """
@@ -373,7 +393,7 @@ class tag_rhmm(tag_order0hmm):
         First thing however that you should do is that you should test
         that the training really was good. In order to do that you
         should have analyzed the parameters that were learnt by the
-        model after supervised training.
+        model after supervised training. 
         """
         assert len(words)>2
         words=[self.get_from_word_vocab(w) for w in words]
@@ -381,6 +401,7 @@ class tag_rhmm(tag_order0hmm):
         score=[None]*len(words)
         with util_oneliner.tictoc("Making Trellis"):
             (la,lb)=self.get_lalpha_lbeta_trellis(np.asarray(words))
+        # FIXME: I have removed beta trellis for now.
         for j in xrange(len(words)):
             l_tj_eq_i=[(tag,
                         util_oneliner.log_sum_exp([la[self._geti(i, k), j]
@@ -393,6 +414,11 @@ class tag_rhmm(tag_order0hmm):
             tags[j], score[j]=max(l_tj_eq_i, key=lambda x: x[1])
             score[j]=float(score[j])
         return tags, score
+    
+    def predict_viterbi_tag_sequence(self, words):
+        """ TODO
+        """
+        raise NotImplementedError
 
     def _geti(self, c, pt):
         return (0 if pt=="S" else pt)*self.num_tag+c
@@ -451,6 +477,7 @@ class tag_rhmm(tag_order0hmm):
             self.gtei(tpi),
             get_previous_max(vec_word, aj, H))
         # tagpdf gives an entire normalized pdf based on the context provided to it.
+        # Basically the k is older than p
         tagpdf_p_k_j_lambda = lambda p, k, j: self._lt_rest_normalized_table(
             self.gtei(p),
             self.gtei(k),
@@ -473,7 +500,6 @@ class tag_rhmm(tag_order0hmm):
                             for k
                             in self._p3t(aj)])
                     lalpha[i, aj] = p_word + p_tag_g_tag
-                        
         # This loop populates beta
         with util_oneliner.tictoc("Populating Beta trellis"):
             for bj in xrange(len(vec_word)-2, -1, -1):
@@ -488,7 +514,7 @@ class tag_rhmm(tag_order0hmm):
                                 "w_g_tc_tp",
                                 w_g_tc_tp_lambda,
                                 (bj, k, self._c(i)))
-                            +lbeta[self._geti(self._c(i), k), bj+1]
+                            +lbeta[self._geti(k, self._c(i)), bj+1]
                             for k
                             in self._pnt()])
         return (lalpha, lbeta)
@@ -522,6 +548,8 @@ class tag_rhmm(tag_order0hmm):
     def get_tg_lt_rest_normalized_table(self, tg_tagh_emb1,
                                         tg_tagh_emb2,
                                         tg_wordh_idx_arr):
+        """ emb1 is the previous tag, emb2 is the previous previous tag
+        """ 
         return lt_rest_normalized_table(
             tg_tagh_emb1 = tg_tagh_emb1.flatten(),
             tg_tagh_emb2 = tg_tagh_emb2.flatten(),
@@ -542,11 +570,7 @@ class tag_rhmm(tag_order0hmm):
                        tg_Ttld2 = self.tg_Ttld2,
                        tg_Wtld = self.tg_Wtld)
     
-    def predict_viterbi_tag_sequence(self, words):
-        """ TODO
-        """
-        raise NotImplementedError
-
+    
     def get_dict_for_save(self):
         return dict(word_context_size=self.word_context_size,
                     embedding_size=self.embedding_size,
